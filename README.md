@@ -14,7 +14,9 @@ example, we would write something alone the lines of
 --      [ WHERE condition ]
 --
 -- so we mirror its logical form.
-data DELETE = DELETE table (Maybe ()) (Maybe usinglist) (Maybe condition)
+data DELETE where
+    DELETE :: table -> Maybe () -> Maybe usinglist -> Maybe condition -> DELETE
+
 exampleTerm table condition = DELETE table Nothing Nothing (Just condition)
 ```
 
@@ -40,10 +42,10 @@ type Parser s t = s -> Maybe (t, s)
 Here we deal with the parsing of *terms* of type `s` to terms of type `t`.
 Those `s` terms are composed of tokens, like `Char` in case `s ~ String`.
 
-Imagine a similar construction with `*` instead of `s`, where tokens have kind
-`* -> *`. That's to say, parser input is a sequence of type constructors.
-Now every term in the parser input is actually a Haskell type, and
-the parsed term `t` is itself a type. We get something like this
+Imagine a similar construction with `*` instead of `s` and `t`, where tokens of
+the input have kind `* -> *`. That's to say, parser input is a sequence of type
+constructors, and parser output is some other type, rather than a term.
+We get something like this
 
 ```Haskell
 -- The parameter f indicates some type whose form is determined by the parsed
