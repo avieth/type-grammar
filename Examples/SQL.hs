@@ -13,6 +13,8 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Examples.SQL where
 
@@ -28,6 +30,16 @@ import Data.Type.Grammar
 --
 -- For the sake of a brief demonstration, we'll just assume that table,
 -- usinglist, and condition grammars consist of a single name.
+
+type Gdelete = GAllOf '[
+      GSymbol DELETE, GSymbol FROM, GOptional (GSymbol ONLY), Gtable
+      , GOptional (GAllOf '[GSymbol USING, Gusinglist])
+      , GOptional (GAllOf '[GSymbol WHERE, Gcondition])
+    ]
+
+type Gtable = GSymbol Name
+type Gusinglist = GSymbol Name
+type Gcondition = GSymbol Name
 
 -- Here we define some symbols which we shall use. They must have
 -- GrammarSymbol instances, so we know how to shorten the stream of
@@ -74,19 +86,6 @@ instance GrammarSymbol WHERE where
 instance IsString m => PrintGrammarSymbol WHERE m where
     printGrammarSymbol _ _ = fromString "WHERE"
 
-type Gdelete = GAllOf '[
-      GSymbol DELETE
-    , GSymbol FROM
-    , GOptional (GSymbol ONLY)
-    , Gtable
-    , GOptional (GAllOf '[GSymbol USING, Gusinglist])
-    , GOptional (GAllOf '[GSymbol WHERE, Gcondition])
-    ]
-
-type Gtable = GSymbol Name
-type Gusinglist = GSymbol Name
-type Gcondition = GSymbol Name
-
 -- GHC can infer this type. It's here just for illustration.
 example1 :: t -> DELETE (FROM (Name t))
 example1 = DELETE . FROM . Name "my_table"
@@ -116,3 +115,31 @@ example3 = DELETE . ONLY . FROM . Name "my_table"
 GrammarNoParse = parseGrammar (Proxy :: Proxy Gdelete)
                               (GrammarMatch (example3 GEnd))
                               (Proxy :: Proxy Gdelete)
+
+-- Since we gave PrintGrammarSymbol instances, we can directly produce SQL
+-- strings from our examples--even the ones which don't parse.
+-- In fact, this will print any sequence of grammar symbols which is printable,
+-- not just SQL.
+printDeleteUnsafe
+    :: ( PrintGrammarSymbols term String )
+    => term
+    -> String
+printDeleteUnsafe term = printGrammarSymbols (" " :: String) (term)
+
+-- A safe printing function demands that the input parses under the grammar.
+-- Trying it with example3, we find a delightful error message:
+--
+--   Couldn't match type ‘GrammarNoParse’
+--                  with ‘GrammarParse Gdelete Gdelete GEnd’
+--   Expected type: GrammarParse Gdelete Gdelete GEnd
+--     Actual type: ParseGrammarK
+--                    Gdelete (GrammarMatch (DELETE (ONLY (FROM (Name GEnd))))) Gdelete
+--
+printDeleteSafe
+    :: ( PrintGrammarSymbols term String
+       ,   ParseGrammarK Gdelete (GrammarMatch term) Gdelete
+         ~ GrammarParse Gdelete Gdelete GEnd
+       )
+    => term
+    -> String
+printDeleteSafe = printDeleteUnsafe
