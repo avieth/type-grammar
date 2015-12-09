@@ -29,80 +29,16 @@ import Data.Proxy
 import Data.Monoid
 import Data.String (IsString, fromString)
 
--- The idea is to use datatype of kind * -> * as symbols in our EDSLs, and
--- construct composite terms via ordinary function composition using their
--- (singleton) constructors. Things like
---
---   SELECT . :*: . FROM . TABLE theTable . WHERE . FIELD id . :=: . VALUE someId
---
--- Precisely which of these constructions are well-formed is decided through
--- a grammar, which ought to resemble at least in form the grammars given by,
--- for instance, the PostgreSQL documentation.
--- With a grammar type in hand, we should automatically recover a function
---
---   injGrammar :: MatchesGrammar ty grammar => ty -> Grammar grammar
---
--- Functions on the terms (types) of the grammar are then defined on the
--- Grammar grammar type.
---
-
-
--- Grammar types are lists whose members are any of these four types.
--- The order of the list is of course essential to the grammar.
---
-type CompositeExpression = GAllOf '[
-      GSymbol OpenParen
-    , GRecurse
-    , GSymbol CloseParen
-    , GOneOf '[ GSymbol Plus, GSymbol Times ]
-    , GSymbol OpenParen
-    , GRecurse
-    , GSymbol CloseParen
-    ]
-type SimpleExpression = GSymbol Number
-type Expression = GOneOf '[
-      SimpleExpression
-    , CompositeExpression
-    ]
-
-data OpenParen t = OpenParen t
-deriving instance Show t => Show (OpenParen t)
-instance GrammarSymbol OpenParen where
-    splitGrammarSymbol (OpenParen t) = t
-instance IsString m => PrintGrammarSymbol OpenParen m where
-    printGrammarSymbol _ _ = fromString "("
-
-data CloseParen t = CloseParen t
-deriving instance Show t => Show (CloseParen t)
-instance GrammarSymbol CloseParen where
-    splitGrammarSymbol (CloseParen t) = t
-instance IsString m => PrintGrammarSymbol CloseParen m where
-    printGrammarSymbol _ _ = fromString ")"
-
-data Plus t = Plus t
-deriving instance Show t => Show (Plus t)
-instance GrammarSymbol Plus where
-    splitGrammarSymbol (Plus t) = t
-instance IsString m => PrintGrammarSymbol Plus m where
-    printGrammarSymbol _ _ = fromString "+"
-
-data Times t = Times t
-deriving instance Show t => Show (Times t)
-instance GrammarSymbol Times where
-    splitGrammarSymbol (Times t) = t
-instance IsString m => PrintGrammarSymbol Times m where
-    printGrammarSymbol _ _ = fromString "x"
-
-data Number t = Number Int t
-deriving instance Show t => Show (Number t)
-instance GrammarSymbol Number where
-    splitGrammarSymbol (Number _ t) = t
-instance IsString m => PrintGrammarSymbol Number m where
-    printGrammarSymbol _ (Number i _) = fromString (show i)
-
+-- | Anything which can be used as a symbol in a grammar. This class shows how
+--   to pop it off and obtain the tail of the sequence. It's analagous to
+--   a Stream typeclass which may be demanded of the input stream for a typical
+--   term parser.
 class GrammarSymbol (ty :: * -> *) where
     splitGrammarSymbol :: ty rest -> rest
 
+-- | It's sometimes nice to be able to print a sequence of constructors, without
+--   first parsing it to a Grammar value. If every type in the sequence is
+--   an instance of this class, then this can be done.
 class GrammarSymbol symbol => PrintGrammarSymbol (symbol :: * -> *) m where
     printGrammarSymbol :: forall anything . Proxy m -> symbol anything -> m
 
@@ -148,11 +84,18 @@ type family GOneOf (grammars :: [*]) where
 type family GMany (grammar :: *) where
     GMany grammar = GClose (GOneOf '[ GAllOf '[grammar, GRecurse], GTrivial ])
 
+-- | A derived grammar, to express the conjunction of 1 or more of the
+--   same grammar.
+type family GMany1 (grammar :: *) where
+    GMany1 grammar = GAllOf '[grammar, GMany grammar]
+
+-- | A derived grammar, to express that a grammar need not be present.
 type family GOptional (grammar :: *) where
     GOptional grammar = GOneOf '[ grammar, GTrivial ]
 
--- | Indicate the end of a series of symbols. It's like a full stop in an
---   English sentence.
+-- | Indicate the end of a sequence of symbols.
+--   The sequences which we shall be parsing are composed of * -> * types.
+--   They are to be plugged with a GEnd to obtain a *.
 data GEnd = GEnd
 deriving instance Show GEnd
 
@@ -172,6 +115,7 @@ data GrammarParse recursion grammar remainder where
         -> remainder
         -> GrammarParse recursion grammar remainder
 
+-- | Indicates no parse.
 data GrammarNoParse = GrammarNoParse
 
 -- | The universal grammar datatype. Its type parameters indicate its form.

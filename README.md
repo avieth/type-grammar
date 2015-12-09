@@ -4,7 +4,7 @@
 
 When we write terms of a DSL in Haskell, we use their logical form rather than
 their written form. In a DSL for a subset of PostgreSQL DELETE statements, for
-example, we would write something alone the lines of
+example, we would write something along the lines of
 
 ```Haskell
 -- The form of PostgreSQL DELETES is this
