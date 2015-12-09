@@ -31,6 +31,8 @@ exampleTerm table condition = DELETE . FROM . table . WHERE . condition
 It's almost like writing the SQL as a string, but without losing type-safety,
 as the term can be checked against a grammar at compile time.
 
+This example is demonstrated further in [SQL.hs](./Examples/SQL.hs).
+
 ## High-level overview of the method
 
 Consider the typical pure functional parser, maybe a type like
