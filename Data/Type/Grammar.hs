@@ -39,13 +39,17 @@ class GrammarSymbol (ty :: * -> *) where
 -- | It's sometimes nice to be able to print a sequence of constructors, without
 --   first parsing it to a Grammar value. If every type in the sequence is
 --   an instance of this class, then this can be done.
-class GrammarSymbol symbol => PrintGrammarSymbol (symbol :: * -> *) m where
-    printGrammarSymbol :: forall anything . Proxy m -> symbol anything -> m
+class GrammarSymbol symbol => PrintGrammarSymbol (symbol :: * -> *) (m :: *) where
+    printGrammarSymbol :: Proxy m -> symbol anything -> m
 
 -- The components of grammars.
 
 -- | A Symbol, the atomic unit of a grammar.
-data GSymbol (ty :: * -> *)
+--   Elements of the list @l@ can be @Check t@, or @Infer@.
+--   This will match @ty ps rest@ whenever @ps@ matches @l@. @ps@ must be a list
+--   of @P s@. In order to match, the lists must be of the same length, and
+--   every @Check t@ in @l@ must have a @P t@ at the same place in @ps@.
+data GSymbol (ty :: [*] -> * -> *) (l :: [*])
 
 -- | A conjunction, or sequence, of two grammars.
 data GProduct (left :: *) (right :: *)
@@ -60,7 +64,13 @@ data GEmpty
 data GTrivial
 
 -- | A term to express recursion in a grammar.
-data GRecurse
+--   Parameter @t@ must be @Infer@ or @Check s@ where @s@ is the grammar
+--   type you expect to match. Of course, you probably can't feed the grammar
+--   you're defining recursively back into @Check s@, so in these cases
+--   you'll use @Infer@.
+--   But sometimes, as in the definition of the family @GMany@, @Check@
+--   really is what we want.
+data GRecurse t
 
 -- | A term to close a grammar to recursion.
 data GClose t
@@ -82,7 +92,7 @@ type family GOneOf (grammars :: [*]) where
 --   be useless to us. Instead, we use symbolic recursion, and are careful to
 --   close the whole type, so that recursion loops back to the right place.
 type family GMany (grammar :: *) where
-    GMany grammar = GClose (GOneOf '[ GAllOf '[grammar, GRecurse], GTrivial ])
+    GMany grammar = GClose (GOneOf '[ GAllOf '[grammar, GRecurse (Check grammar)], GTrivial ])
 
 -- | A derived grammar, to express the conjunction of 1 or more of the
 --   same grammar.
@@ -98,6 +108,15 @@ type family GOptional (grammar :: *) where
 --   They are to be plugged with a GEnd to obtain a *.
 data GEnd = GEnd
 deriving instance Show GEnd
+
+-- | Indicate a parameter to a symbol.
+data P t
+
+-- | Indicate that this parameter must match type @t@.
+data Check t
+
+-- | Indicate that this parameter is to be inferred.
+data Infer
 
 -- | Used to indicate that we're looking to match a grammar.
 --   Compare at @GrammarParse@ and @GrammarNoParse@, which indicate that we have
@@ -122,8 +141,8 @@ data GrammarNoParse = GrammarNoParse
 --   Note that there is no constructor for GEmpty.
 data Grammar (recursion :: *) (grammar :: *) :: * where
     GrammarSymbol
-        :: symbol rest
-        -> Grammar recursion (GSymbol symbol)
+        :: symbol ps rest
+        -> Grammar recursion (GSymbol symbol ps)
     GrammarProduct
         :: (Grammar recursion left, Grammar recursion right)
         -> Grammar recursion (GProduct left right)
@@ -132,11 +151,15 @@ data Grammar (recursion :: *) (grammar :: *) :: * where
         -> Grammar recursion (GSum left right)
     GrammarTrivial :: Grammar recursion GTrivial
     GrammarRecurse
-        :: Grammar recursion recursion
-        -> Grammar recursion GRecurse
+        :: Grammar recursion recursion'
+        -> Grammar recursion (GRecurse recursion')
+    -- Here you don't get a hold of the grammar which was closed, only the
+    -- otuput @grammar'@, which may differ in inferred parameters.
+    -- That should be fine, though. I don't think we ever actually need the
+    -- first parameter of Grammar.
     GrammarClose
-        :: Grammar grammar grammar
-        -> Grammar recursion (GClose grammar)
+        :: Grammar grammar grammar'
+        -> Grammar recursion (GClose grammar')
 
 -- | This type family will parse a sequence of symbols to a grammar.
 --   - @recursion@ is the reference for recursive grammars.
@@ -153,17 +176,19 @@ type family ParseGrammarK (recursion :: *) (ty :: *) (grammar :: *) :: * where
     ParseGrammarK recursion (GrammarMatch anything) (GEmpty) =
         GrammarNoParse
 
-    -- GSymbol matching. We use type-equality on the symbols, which
-    -- have kind * -> *. The parameter to a matching symbol becomes the
-    -- remaining (unparsed) type.
-    ParseGrammarK recursion (GrammarMatch (ty rest)) (GSymbol ty) =
-        GrammarParse recursion (GSymbol ty) rest
-    ParseGrammarK recursion (GrammarMatch ty) (GSymbol ty') =
-        GrammarNoParse
+    -- GSymbol.
+    -- We match the parameters, and feed those into the symbol matching
+    -- family. Only if the symbol types are the same, and their parameters
+    -- match, do we give a parse.
+    ParseGrammarK recursion (GrammarMatch ty) (GSymbol ty' args) =
+        ParseGrammarSymbolK (recursion)
+                            (GrammarMatch ty)
+                            (GSymbol ty' args)
+                            (SymbolParameterMatchK ty (GSymbol ty' args))
 
     -- GRecurse
-    ParseGrammarK recursion anything GRecurse =
-        ParseGrammarRecurseK recursion anything GRecurse 
+    ParseGrammarK recursion anything (GRecurse arg) =
+        ParseGrammarRecurseK recursion anything (GRecurse arg)
 
     -- GClose
     ParseGrammarK recursion anything (GClose grammar) =
@@ -204,21 +229,22 @@ instance
   where
     parseGrammar _ _ _ = GrammarNoParse
 
-instance {-# OVERLAPS #-}
-    ( GrammarSymbol ty
-    ) => ParseGrammar recursion (GrammarMatch (ty rest)) (GSymbol ty)
+instance
+    ( ParseGrammarSymbol (recursion)
+                         (GrammarMatch ty)
+                         (GSymbol ty' args)
+                         (SymbolParameterMatchK ty (GSymbol ty' args))
+    ) => ParseGrammar recursion (GrammarMatch ty) (GSymbol ty' args)
   where
-    parseGrammar _ (GrammarMatch symbol) _ = GrammarParse (GrammarSymbol symbol) (splitGrammarSymbol symbol)
-
-instance {-# OVERLAPS #-}
-    ( ParseGrammarK recursion (GrammarMatch ty) (GSymbol ty') ~ GrammarNoParse
-    ) => ParseGrammar recursion (GrammarMatch ty) (GSymbol ty')
-  where
-    parseGrammar _ _ _ = GrammarNoParse
+    parseGrammar recursion ty grammar =
+        parseGrammarSymbol recursion ty grammar parameterMatch
+      where
+        parameterMatch :: Proxy (SymbolParameterMatchK ty (GSymbol ty' args))
+        parameterMatch = Proxy
 
 instance
-    ( ParseGrammarRecurse recursion anything GRecurse
-    ) => ParseGrammar recursion anything GRecurse
+    ( ParseGrammarRecurse recursion anything (GRecurse arg)
+    ) => ParseGrammar recursion anything (GRecurse arg)
   where
     parseGrammar = parseGrammarRecurse
 
@@ -246,17 +272,91 @@ instance
     parseGrammar recursion anything sproduct =
         parseGrammarSum recursion anything sproduct anything
 
+-- Parameter matching of symbols (checking and inference).
+data ParameterMatch (ps :: [*])
+data ParameterNoMatch
+
+type family SymbolParameterMatchCons (p :: *) (ps :: *) :: * where
+    SymbolParameterMatchCons (P t) (ParameterMatch ps) = ParameterMatch (P t ': ps)
+    SymbolParameterMatchCons (P t) (ParameterNoMatch) = ParameterNoMatch
+
+type family SymbolParameterMatchK (symbol :: *) (grammar :: *) :: * where
+
+    SymbolParameterMatchK (ty '[] rest) (GSymbol ty '[]) = ParameterMatch '[]
+    SymbolParameterMatchK (ty (P t ': ps) rest) (GSymbol ty (Infer ': qs)) =
+        SymbolParameterMatchCons (P t) (SymbolParameterMatchK (ty ps rest) (GSymbol ty qs))
+    SymbolParameterMatchK (ty (P t ': ps) rest) (GSymbol ty (Check t ': qs)) =
+        SymbolParameterMatchCons (P t) (SymbolParameterMatchK (ty ps rest) (GSymbol ty qs))
+    SymbolParameterMatchK (ty (P t ': ps) rest) (GSymbol ty (Check s ': qs)) =
+        ParameterNoMatch
+    SymbolParameterMatchK (ty '[] rest) (GSymbol ty (p ': ps)) =
+        ParameterNoMatch
+    SymbolParameterMatchK (ty (p ': ps) rest) (GSymbol ty '[]) =
+        ParameterNoMatch
+
+type family ParseGrammarSymbolK (recursion :: *) (ty :: *) (grammar :: *) (parameters :: *) :: * where
+
+    ParseGrammarSymbolK recursion (GrammarMatch (ty ps rest)) (GSymbol ty rs) (ParameterMatch ps) =
+        GrammarParse recursion (GSymbol ty ps) rest
+
+    ParseGrammarSymbolK recursion (GrammarMatch (ty qs rest)) (GSymbol ty rs) (ParameterNoMatch) =
+        GrammarNoParse
+
+    -- Catch-all failure case.
+    ParseGrammarSymbolK recursion (GrammarMatch a) (GSymbol b c) parameters =
+        GrammarNoParse
+
+-- | Companion class to ParseGrammarSymbolK.
+class ParseGrammarSymbol (recursion :: *) (ty :: *) (grammar :: *) (parameters :: *) where
+    parseGrammarSymbol
+        :: Proxy recursion
+        -> ty
+        -> Proxy grammar
+        -> Proxy parameters
+        -> ParseGrammarSymbolK recursion ty grammar parameters
+
+instance
+    ( GrammarSymbol (ty ps)
+    ) => ParseGrammarSymbol recursion (GrammarMatch (ty ps rest)) (GSymbol ty rs) (ParameterMatch ps)
+  where
+    parseGrammarSymbol _ (GrammarMatch ty) _ _ = GrammarParse (GrammarSymbol ty) (splitGrammarSymbol ty)
+
+instance
+    (
+    ) => ParseGrammarSymbol recursion (GrammarMatch (ty qs rest)) (GSymbol ty rs) (ParameterNoMatch)
+  where
+    parseGrammarSymbol _ _ _ _ = GrammarNoParse
+
+instance {-# OVERLAPS #-}
+    (   ParseGrammarSymbolK recursion (GrammarMatch a) (GSymbol b c) parameters
+      ~ GrammarNoParse
+    ) => ParseGrammarSymbol recursion (GrammarMatch a) (GSymbol b c) parameters
+  where
+    parseGrammarSymbol _ _ _ _ = GrammarNoParse
+
+-- | Observe how we treat the parameter to GRecurse.
+--   When we parse the input using the recursion reference, we may get a parse,
+--   and the parse we get may not be exactly the same as the recursion type,
+--   because parameters may be inferred. If the GRecurse parameter is Infer
+--   then we take this as it is, otherwise (it's Check) we demand that it
+--   matches the expected parameter.
 type family ParseGrammarRecurseK (recursion :: *) (ty :: *) (grammar :: *) :: * where
 
-    ParseGrammarRecurseK recursion (GrammarParse recursion recursion rest) GRecurse =
-        GrammarParse recursion GRecurse rest
+    ParseGrammarRecurseK recursion (GrammarParse recursion recursion' rest) (GRecurse Infer) =
+        GrammarParse recursion (GRecurse recursion') rest
 
-    ParseGrammarRecurseK recursion GrammarNoParse GRecurse = GrammarNoParse
+    ParseGrammarRecurseK recursion (GrammarParse recursion recursion' rest) (GRecurse (Check recursion')) =
+        GrammarParse recursion (GRecurse recursion') rest
 
-    ParseGrammarRecurseK recursion (GrammarMatch ty) GRecurse =
+    ParseGrammarRecurseK recursion (GrammarParse recursion recursion' rest) (GRecurse (Check recursion'')) =
+        GrammarNoParse
+
+    ParseGrammarRecurseK recursion GrammarNoParse (GRecurse arg) = GrammarNoParse
+
+    ParseGrammarRecurseK recursion (GrammarMatch ty) (GRecurse arg) =
         ParseGrammarRecurseK (recursion)
                              (ParseGrammarK recursion (GrammarMatch ty) recursion)
-                             (GRecurse)
+                             (GRecurse arg)
 
 -- | Companion class to ParseGrammarRecurseK.
 class ParseGrammarRecurse (recursion :: *) (ty :: *) (grammar :: *) where
@@ -268,22 +368,37 @@ class ParseGrammarRecurse (recursion :: *) (ty :: *) (grammar :: *) where
 
 instance
     (
-    ) => ParseGrammarRecurse recursion (GrammarParse recursion recursion rest) GRecurse
+    ) => ParseGrammarRecurse recursion (GrammarParse recursion recursion' rest) (GRecurse Infer)
   where
     parseGrammarRecurse _ (GrammarParse this rest) _ = GrammarParse (GrammarRecurse this) rest
 
 instance
     (
-    ) => ParseGrammarRecurse recursion GrammarNoParse GRecurse
+    ) => ParseGrammarRecurse recursion (GrammarParse recursion recursion' rest) (GRecurse (Check recursion'))
+  where
+    parseGrammarRecurse _ (GrammarParse this rest) _ = GrammarParse (GrammarRecurse this) rest
+
+instance {-# OVERLAPS #-}
+    (   ParseGrammarRecurseK (recursion)
+                             (GrammarParse recursion recursion' rest)
+                             (GRecurse (Check recursion''))
+      ~ GrammarNoParse
+    ) => ParseGrammarRecurse recursion (GrammarParse recursion recursion' rest) (GRecurse (Check recursion''))
+  where
+    parseGrammarRecurse _ _ _ = GrammarNoParse
+
+instance
+    (
+    ) => ParseGrammarRecurse recursion GrammarNoParse (GRecurse arg)
   where
     parseGrammarRecurse _ grammarNoParse _ = grammarNoParse
 
 instance
     ( ParseGrammarRecurse (recursion)
                           (ParseGrammarK recursion (GrammarMatch ty) recursion)
-                          (GRecurse)
+                          (GRecurse arg)
     , ParseGrammar recursion (GrammarMatch ty) recursion
-    ) => ParseGrammarRecurse recursion (GrammarMatch ty) GRecurse
+    ) => ParseGrammarRecurse recursion (GrammarMatch ty) (GRecurse arg)
   where
     parseGrammarRecurse recursion (GrammarMatch ty) grecurse =
         parseGrammarRecurse (recursion)
@@ -292,8 +407,8 @@ instance
 
 type family ParseGrammarCloseK (recursion :: *) (ty :: *) (grammar :: *) :: * where
 
-    ParseGrammarCloseK recursion (GrammarParse grammar grammar rest) (GClose grammar) =
-        GrammarParse recursion (GClose grammar) rest
+    ParseGrammarCloseK recursion (GrammarParse grammar grammar' rest) (GClose grammar) =
+        GrammarParse recursion (GClose grammar') rest
 
     ParseGrammarCloseK recursion GrammarNoParse (GClose grammar) =
         GrammarNoParse
@@ -316,7 +431,7 @@ class ParseGrammarClose (recursion :: *) (ty :: *) (grammar :: *) where
 
 instance
     (
-    ) => ParseGrammarClose recursion (GrammarParse grammar grammar rest) (GClose grammar)
+    ) => ParseGrammarClose recursion (GrammarParse grammar grammar' rest) (GClose grammar)
   where
     parseGrammarClose _ (GrammarParse this rest) _ = GrammarParse (GrammarClose this) rest
 
@@ -356,20 +471,23 @@ type family ParseGrammarProductK (recursion :: *) (ty :: *) (grammar :: *) (left
     -- Here we know it's a recursive call from the final clause of this family.
     -- It means the left was parsed, and @rest@ is the remaining (unparsed)
     -- type, which must parse under right.
-    ParseGrammarProductK recursion (GrammarParse recursion left rest) (ParseGrammarProductLeft left right) () =
+    --
+    -- NB left' not necessarily left, as parsing can change the type by
+    -- inferring parameters.
+    ParseGrammarProductK recursion (GrammarParse recursion left rest) (ParseGrammarProductLeft left' right) () =
         ParseGrammarProductK (recursion)
                              (ParseGrammarK recursion (GrammarMatch rest) right)
-                             (ParseGrammarProductRight left right)
+                             (ParseGrammarProductRight left' right)
                              (GrammarParse recursion left rest)
 
-    ParseGrammarProductK recursion (GrammarParse recursion right rest) (ParseGrammarProductRight left right) (GrammarParse recursion left rest') =
+    ParseGrammarProductK recursion (GrammarParse recursion right rest) (ParseGrammarProductRight left' right') (GrammarParse recursion left rest') =
         GrammarParse recursion (GProduct left right) rest
 
     -- Here we know it's a recursive call from the final clause of this family.
     -- It means the left failed to parse, so the whole thing fails.
     ParseGrammarProductK recursion (GrammarNoParse) (ParseGrammarProductLeft left right) () =
         GrammarNoParse
-    ParseGrammarProductK recursion (GrammarNoParse) (ParseGrammarProductRight left right) (GrammarParse recursion left rest') =
+    ParseGrammarProductK recursion (GrammarNoParse) (ParseGrammarProductRight left right) (GrammarParse recursion left' rest') =
         GrammarNoParse
 
     -- Try parsing to left, and pass its output back to this family.
@@ -394,22 +512,22 @@ class ParseGrammarProduct (recursion :: *) (ty :: *) (grammar :: *) (leftParse :
 instance
     ( ParseGrammarProduct (recursion)
                           (ParseGrammarK recursion (GrammarMatch rest) right)
-                          (ParseGrammarProductRight left right)
+                          (ParseGrammarProductRight left' right)
                           (GrammarParse recursion left rest)
     , ParseGrammar recursion (GrammarMatch rest) right
-    ) => ParseGrammarProduct recursion (GrammarParse recursion left rest) (ParseGrammarProductLeft left right) ()
+    ) => ParseGrammarProduct recursion (GrammarParse recursion left rest) (ParseGrammarProductLeft left' right) ()
   where
     parseGrammarProduct recursion (GrammarParse this rest) _ () =
         parseGrammarProduct (recursion)
                             (parseGrammar recursion (GrammarMatch rest) (Proxy :: Proxy right))
-                            (Proxy :: Proxy (ParseGrammarProductRight left right))
+                            (Proxy :: Proxy (ParseGrammarProductRight left' right))
                             (GrammarParse this rest)
 
 -- This is the instance which demands that fourth parameter. Observe how we
 -- use it to create the product grammar.
 instance
     (
-    ) => ParseGrammarProduct recursion (GrammarParse recursion right rest) (ParseGrammarProductRight left right) (GrammarParse recursion left rest')
+    ) => ParseGrammarProduct recursion (GrammarParse recursion right rest) (ParseGrammarProductRight left' right') (GrammarParse recursion left rest')
   where
     parseGrammarProduct _ (GrammarParse right rest) _ (GrammarParse left rest') =
         GrammarParse (GrammarProduct (left, right)) rest
@@ -448,11 +566,11 @@ instance
 type family ParseGrammarSumK (recursion :: *) (ty :: *) (grammar :: *) (initial :: *) :: * where
 
     -- The left parsed; we're done.
-    ParseGrammarSumK recursion (GrammarParse recursion left rest) (ParseGrammarSumLeft left right) initial =
+    ParseGrammarSumK recursion (GrammarParse recursion left rest) (ParseGrammarSumLeft left' right) initial =
         GrammarParse recursion (GSum left right) rest
 
     -- The right parsed; we're done.
-    ParseGrammarSumK recursion (GrammarParse recursion right rest) (ParseGrammarSumRight left right) initial =
+    ParseGrammarSumK recursion (GrammarParse recursion right rest) (ParseGrammarSumRight left right') initial =
         GrammarParse recursion (GSum left right) rest
 
     -- The left failed to parse; try the right.
@@ -486,7 +604,7 @@ class ParseGrammarSum (recursion :: *) (ty :: *) (grammar :: *) (initial :: *) w
 
 instance
     (
-    ) => ParseGrammarSum recursion (GrammarParse recursion left rest) (ParseGrammarSumLeft left right) initial
+    ) => ParseGrammarSum recursion (GrammarParse recursion left rest) (ParseGrammarSumLeft left' right) initial
   where
     parseGrammarSum _ (GrammarParse this rest) _ _ =
         GrammarParse (GrammarSum sum) rest
@@ -496,7 +614,7 @@ instance
 
 instance
     (
-    ) => ParseGrammarSum recursion (GrammarParse recursion right rest) (ParseGrammarSumRight left right) initial
+    ) => ParseGrammarSum recursion (GrammarParse recursion right rest) (ParseGrammarSumRight left right') initial
   where
     parseGrammarSum _ (GrammarParse this rest) _ _ =
         GrammarParse (GrammarSum sum) rest
@@ -564,3 +682,15 @@ instance {-# OVERLAPS #-}
                 , spacer
                 , printGrammarSymbols spacer symbols
                 ]
+
+-- Some tools for identifying complete parses, without having to state the
+-- first and second parameters of a GrammarParse.
+type family GrammarParseRemainder (grammarParse :: *) :: * where
+    GrammarParseRemainder (GrammarParse a b rest) = rest
+
+class
+    ( GrammarParseRemainder (ParseGrammarK grammar term grammar) ~ GEnd
+    ) => CompleteParse term grammar
+instance
+    ( GrammarParseRemainder (ParseGrammarK grammar term grammar) ~ GEnd
+    ) => CompleteParse term grammar
