@@ -17,6 +17,7 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Examples.SQL where
 
@@ -34,7 +35,11 @@ import Data.Type.Grammar
 -- For the sake of a brief demonstration, we'll just assume that table,
 -- usinglist, and condition grammars consist of a single name.
 
-type Gdelete tableName = GAllOf '[
+--data Gdelete (tableName :: *)
+--type instance DerivedGrammarType (Gdelete tableName) = GdeleteUnderlying tableName
+--type instance DerivedGrammarReconstruction (GdeleteUnderlying tableName) (Gdelete Infer) = Gdelete tableName
+--type instance DerivedGrammarReconstruction (GdeleteUnderlying (P tableName)) (Gdelete (Check tableName)) = Gdelete (P tableName)
+type Gdelete (tableName :: *) = GAllOf '[
       GSymbol DELETE '[], GSymbol FROM '[], GOptional (GSymbol ONLY '[]), Gtable tableName
       , GOptional (GAllOf '[GSymbol USING '[], Gusinglist Infer])
       , GOptional (GAllOf '[GSymbol WHERE '[], Gcondition Infer])
@@ -62,6 +67,7 @@ data DELETE (ps :: [*]) t where
     DELETE :: t -> DELETE '[] t
 instance GrammarSymbol (DELETE '[]) where
     splitGrammarSymbol (DELETE t) = t
+    mapGrammarSymbol f (DELETE t) = DELETE (f t)
 instance IsString m => PrintGrammarSymbol (DELETE '[]) m where
     printGrammarSymbol _ _ = fromString "DELETE"
 
@@ -69,6 +75,7 @@ data FROM (ps :: [*]) t where
     FROM :: t -> FROM '[] t
 instance GrammarSymbol (FROM '[]) where
     splitGrammarSymbol (FROM t) = t
+    mapGrammarSymbol f (FROM t) = FROM (f t)
 instance IsString m => PrintGrammarSymbol (FROM '[]) m where
     printGrammarSymbol _ _ = fromString "FROM"
 
@@ -76,13 +83,15 @@ data ONLY (ps :: [*]) t where
     ONLY :: t -> ONLY '[] t
 instance GrammarSymbol (ONLY '[]) where
     splitGrammarSymbol (ONLY t) = t
+    mapGrammarSymbol f (ONLY t) = ONLY (f t)
 instance IsString m => PrintGrammarSymbol (ONLY '[]) m where
     printGrammarSymbol _ _ = fromString "ONLY"
 
 data Name (ps :: [*]) t where
     Name :: Proxy sym -> t -> Name '[P (sym :: Symbol)] t
-instance GrammarSymbol (Name '[P sym]) where
+instance GrammarSymbol (Name '[P (sym :: Symbol)]) where
     splitGrammarSymbol (Name _ t) = t
+    mapGrammarSymbol f (Name s t) = Name s (f t)
 instance (KnownSymbol sym, IsString m) => PrintGrammarSymbol (Name '[P sym]) m where
     printGrammarSymbol _ (Name proxySym _) = fromString (symbolVal proxySym)
 
@@ -90,6 +99,7 @@ data USING (ps :: [*]) t where
     USING :: t -> USING '[] t
 instance GrammarSymbol (USING '[]) where
     splitGrammarSymbol (USING t) = t
+    mapGrammarSymbol f (USING t) = USING (f t)
 instance IsString m => PrintGrammarSymbol (USING '[]) m where
     printGrammarSymbol _ _ = fromString "USING"
 
@@ -97,6 +107,7 @@ data WHERE (ps :: [*]) t where
     WHERE :: t -> WHERE '[] t
 instance GrammarSymbol (WHERE '[]) where
     splitGrammarSymbol (WHERE t) = t
+    mapGrammarSymbol f (WHERE t) = WHERE (f t)
 instance IsString m => PrintGrammarSymbol (WHERE '[]) m where
     printGrammarSymbol _ _ = fromString "WHERE"
 
@@ -104,6 +115,7 @@ instance IsString m => PrintGrammarSymbol (WHERE '[]) m where
 --example1 :: GEnd -> DELETE '[] (FROM '[] (Name '[P "my_table"] GEnd))
 example1 = DELETE . FROM . Name (Proxy :: Proxy "my_table")
 
+{-
 -- This is not a partial match; GHC knows that example1 parses under Gdelete,
 -- and is able to produce gexample1 always.
 -- gexample1's Grammar type has two parameters because the first is used to
@@ -163,3 +175,4 @@ printDeleteSafe
     => term
     -> String
 printDeleteSafe = printDeleteUnsafe
+-}
