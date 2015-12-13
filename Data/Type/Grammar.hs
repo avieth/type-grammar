@@ -705,6 +705,34 @@ instance
         PClose (POneOfHere (PAllOfCons here (PAllOfCons (PRecurse recurse) PAllOfNil))) ->
             PManyCons here (inferFromUnderlying (Proxy :: Proxy (GMany grammar')) recurse)
 
+-- | An optional grammar.
+data GOptional (grammar :: *)
+
+data POptional (maybeGrammar :: Maybe *) where
+    POptionalJust :: grammar -> POptional ('Just grammar)
+    POptionalNothing :: POptional 'Nothing
+
+instance
+    ( DerivedGrammar grammar
+    ) => DerivedGrammar (GOptional grammar)
+  where
+    type DerivedFrom (GOptional grammar) = GOneOf '[grammar, GTrivial]
+
+instance
+    ( DerivedGrammar grammar
+    ) => InferredGrammar (POneOf Z inferred) (GOptional grammar)
+  where
+    type InferredForm (POneOf Z inferred) (GOptional grammar) = POptional ('Just inferred)
+    inferFromUnderlying _ term = case term of
+        POneOfHere inferred -> POptionalJust inferred
+
+instance
+    ( DerivedGrammar grammar
+    ) => InferredGrammar (POneOf (S Z) PTrivial) (GOptional grammar)
+  where
+    type InferredForm (POneOf (S Z) PTrivial) (GOptional grammar) = POptional 'Nothing
+    inferFromUnderlying _ _ = POptionalNothing
+
 -- | Indicate the end of a sequence of symbols.
 --   The sequences which we shall be parsing are composed of * -> * types.
 --   They are to be plugged with a GEnd to obtain a *.
