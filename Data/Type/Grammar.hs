@@ -33,27 +33,6 @@ import Data.String (IsString, fromString)
 -- | Use this type in the parameter list for a Symbol.
 data P (t :: k) :: *
 
-data TestSymbol (ps :: [*]) (t :: *) :: * where
-    TestSymbol :: t -> TestSymbol '[] t
-
-instance GrammarSymbol (TestSymbol ps) where
-    splitGrammarSymbol (TestSymbol t) = t
-    mapGrammarSymbol f (TestSymbol t) = TestSymbol (f t)
-
-data SymbolA (ps :: [*]) (t :: *) :: * where
-    SymbolA :: t -> SymbolA '[] t
-
-instance GrammarSymbol (SymbolA ps) where
-    splitGrammarSymbol (SymbolA t) = t
-    mapGrammarSymbol f (SymbolA t) = SymbolA (f t)
-
-data SymbolB (ps :: [*]) (t :: *) :: * where
-    SymbolB :: t -> SymbolB '[] t
-
-instance GrammarSymbol (SymbolB ps) where
-    splitGrammarSymbol (SymbolB t) = t
-    mapGrammarSymbol f (SymbolB t) = SymbolB (f t)
-
 type family ParseDerivedGrammarK (derivedGrammar :: *) (term :: *) :: * where
     ParseDerivedGrammarK derivedGrammar term =
         ParseDerivedGrammarChooseK derivedGrammar (ParseGrammarK (DeconstructGrammar derivedGrammar)
@@ -269,13 +248,6 @@ type family TransitiveInferredGrammarRec (recursive:: *) (recursiveDerived :: *)
     -- is recursive through DerivedFrom.
     TransitiveInferredGrammarRec goal r grammar grammar' inferred =
         InferredForm (TransitiveInferredGrammarRec goal r (DerivedFrom grammar) (DerivedFrom grammar') inferred) grammar
-
---   TransitiveInferredGrammar (GAllOf '[GSymbol SymbolA, GOptional (GSymbol SymbolA)])
---                             (PProduct (PSymbol SymbolA '[]) (PProduct (PSum ('Right (PSum ('Left PTrivial)))) PTrivial))
--- = InferredForm (PProduct (TransitiveInferredGrammarRec _ _ (PSymbolA)
---                          ()
---                )
---                (GAllOf '[GSymbol SymbolA, GOptional (GSymbol SymbolA)])
 
 -- A type for use in TransitiveInferredGrammar. In case the grammar could not
 -- be reconstructed, you get this somewhere in a tree of InferredFrom.
@@ -676,12 +648,6 @@ instance
                (POneOfGrammar (InferredForm there (GOneOf grammars)))
     inferFromUnderlying _ sum = case sum of
         PSumRight right -> POneOfThere (inferFromUnderlying (Proxy :: Proxy (GOneOf grammars)) right)
-
-type Test1 = GAllOf '[GSymbol TestSymbol, GOneOf '[GSymbol TestSymbol, GTrivial]]
-type Test1Parsed = GrammarParseInferred (ParseGrammarK (DeconstructGrammar Test1)
-                                                       (GrammarMatch (TestSymbol '[] (TestSymbol '[] GEnd)))
-                                                       (DeconstructGrammar Test1)
-                                        )
 
 -- | 0 or more of a grammar in sequence.
 data GMany (grammar :: *)
