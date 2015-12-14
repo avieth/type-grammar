@@ -30,6 +30,9 @@ import Data.Proxy
 import Data.Monoid
 import Data.String (IsString, fromString)
 
+-- | Use this type in the parameter list for a Symbol.
+data P (t :: k) :: *
+
 data TestSymbol (ps :: [*]) (t :: *) :: * where
     TestSymbol :: t -> TestSymbol '[] t
 
@@ -158,15 +161,21 @@ class
 -- | Fully deconstruct a grammar, producing a primitive grammar suitable for
 --   use in ParseGrammarK.
 --
---   It works by repeatedly applying DerivedFrom until a fix-point is found.
+--   Notice the relationship between this family and @DerivedFrom@.
+--   This one is essentially responsible for lifting @DerivedFrom@ into a
+--   recursive action.
 type family DeconstructGrammar (derivedGrammar :: *) :: * where
-    DeconstructGrammar derivedGrammar = DeconstructGrammarFix derivedGrammar (DerivedFrom derivedGrammar)
+    DeconstructGrammar GEmpty = GEmpty
+    DeconstructGrammar GTrivial = GTrivial
+    DeconstructGrammar (GSymbol symbol) = GSymbol symbol
+    DeconstructGrammar (GProduct left right) =
+        GProduct (DeconstructGrammar left) (DeconstructGrammar right)
+    DeconstructGrammar (GSum left right) =
+        GSum (DeconstructGrammar left) (DeconstructGrammar right)
+    DeconstructGrammar GRecurse = GRecurse
+    DeconstructGrammar (GClose close) = GClose (DeconstructGrammar close)
+    DeconstructGrammar derived = DeconstructGrammar (DerivedFrom derived)
 
-type family DeconstructGrammarFix (reference :: *) (derivedGrammar :: *) :: * where
-    DeconstructGrammarFix derivedGrammar derivedGrammar = derivedGrammar
-    DeconstructGrammarFix derivedGrammar derivedGrammar' =
-        DeconstructGrammarFix (DerivedFrom derivedGrammar)
-                              (DerivedFrom derivedGrammar')
 
 -- | Reconstruct the inferred grammar of a symbolic grammar from the inferred
 --   grammar of a *primitive* symbolic grammar, i.e. something that comes
@@ -255,6 +264,13 @@ type family TransitiveInferredGrammarRec (recursive:: *) (recursiveDerived :: *)
     -- is recursive through DerivedFrom.
     TransitiveInferredGrammarRec goal r grammar grammar' inferred =
         InferredForm (TransitiveInferredGrammarRec goal r (DerivedFrom grammar) (DerivedFrom grammar') inferred) grammar
+
+--   TransitiveInferredGrammar (GAllOf '[GSymbol SymbolA, GOptional (GSymbol SymbolA)])
+--                             (PProduct (PSymbol SymbolA '[]) (PProduct (PSum ('Right (PSum ('Left PTrivial)))) PTrivial))
+-- = InferredForm (PProduct (TransitiveInferredGrammarRec _ _ (PSymbolA)
+--                          ()
+--                )
+--                (GAllOf '[GSymbol SymbolA, GOptional (GSymbol SymbolA)])
 
 -- A type for use in TransitiveInferredGrammar. In case the grammar could not
 -- be reconstructed, you get this somewhere in a tree of InferredFrom.
@@ -460,8 +476,7 @@ instance
     , DerivedGrammar right
     ) => DerivedGrammar (GProduct left right)
   where
-    type DerivedFrom (GProduct left right) =
-        GProduct (DerivedFrom left) (DerivedFrom right)
+    type DerivedFrom (GProduct left right) = GProduct left right
 
 instance
     ( DerivedGrammar left
@@ -474,6 +489,7 @@ instance
 
 -- | A disjunction, or choice, of two grammars.
 data GSum (left :: *) (right :: *)
+
 data PSum (t :: Either * *) where
     PSumLeft :: leftGrammar -> PSum ('Left leftGrammar)
     PSumRight :: rightGrammar -> PSum ('Right rightGrammar)
@@ -483,8 +499,7 @@ instance
     , DerivedGrammar right
     ) => DerivedGrammar (GSum left right)
   where
-    type DerivedFrom (GSum left right) =
-        GSum (DerivedFrom left) (DerivedFrom right)
+    type DerivedFrom (GSum left right) = GSum left right
 
 instance
     ( DerivedGrammar left
