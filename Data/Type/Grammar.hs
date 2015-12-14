@@ -119,6 +119,11 @@ type family GrammarParseInferred (grammarParse :: *) :: * where
 type family GrammarParseRemainder (grammarParse :: *) :: * where
     GrammarParseRemainder (GrammarParse parsed remainder) = remainder
 
+-- | Assert that a term parses completely (remainder is GEnd) under a grammar.
+type FullParse derivedGrammar term =
+      GrammarParseRemainder (ParseDerivedGrammarK derivedGrammar term)
+    ~ GEnd
+
 -- | This class recognizes complete parses (remainder is GEnd).
 --   Assumes the convention that GEnd is always used to terminate the sequence
 --   of types.
