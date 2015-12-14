@@ -286,7 +286,6 @@ data DELETE (ps :: [*]) t where
     DELETE :: t -> DELETE '[] t
 instance GrammarSymbol (DELETE '[]) where
     splitGrammarSymbol (DELETE t) = t
-    mapGrammarSymbol f (DELETE t) = DELETE (f t)
 instance IsString m => PrintGrammarSymbol (DELETE '[]) m where
     printGrammarSymbol _ _ = fromString "DELETE"
 
@@ -294,7 +293,6 @@ data FROM (ps :: [*]) t where
     FROM :: t -> FROM '[] t
 instance GrammarSymbol (FROM '[]) where
     splitGrammarSymbol (FROM t) = t
-    mapGrammarSymbol f (FROM t) = FROM (f t)
 instance IsString m => PrintGrammarSymbol (FROM '[]) m where
     printGrammarSymbol _ _ = fromString "FROM"
 
@@ -302,7 +300,6 @@ data ONLY (ps :: [*]) t where
     ONLY :: t -> ONLY '[] t
 instance GrammarSymbol (ONLY '[]) where
     splitGrammarSymbol (ONLY t) = t
-    mapGrammarSymbol f (ONLY t) = ONLY (f t)
 instance IsString m => PrintGrammarSymbol (ONLY '[]) m where
     printGrammarSymbol _ _ = fromString "ONLY"
 
@@ -310,7 +307,6 @@ data Name (ps :: [*]) t where
     Name :: Proxy sym -> t -> Name '[P (sym :: Symbol)] t
 instance GrammarSymbol (Name '[P (sym :: Symbol)]) where
     splitGrammarSymbol (Name _ t) = t
-    mapGrammarSymbol f (Name s t) = Name s (f t)
 instance (KnownSymbol sym, IsString m) => PrintGrammarSymbol (Name '[P sym]) m where
     printGrammarSymbol _ (Name proxySym _) = fromString (symbolVal proxySym)
 
@@ -318,7 +314,6 @@ data USING (ps :: [*]) t where
     USING :: t -> USING '[] t
 instance GrammarSymbol (USING '[]) where
     splitGrammarSymbol (USING t) = t
-    mapGrammarSymbol f (USING t) = USING (f t)
 instance IsString m => PrintGrammarSymbol (USING '[]) m where
     printGrammarSymbol _ _ = fromString "USING"
 
@@ -326,6 +321,5 @@ data WHERE (ps :: [*]) t where
     WHERE :: t -> WHERE '[] t
 instance GrammarSymbol (WHERE '[]) where
     splitGrammarSymbol (WHERE t) = t
-    mapGrammarSymbol f (WHERE t) = WHERE (f t)
 instance IsString m => PrintGrammarSymbol (WHERE '[]) m where
     printGrammarSymbol _ _ = fromString "WHERE"

@@ -119,7 +119,6 @@ instance
 --   term parser.
 class GrammarSymbol (ty :: * -> *) where
     splitGrammarSymbol :: ty rest -> rest
-    mapGrammarSymbol :: (rest -> rest') -> ty rest -> ty rest'
 
 -- | It's sometimes nice to be able to print a sequence of constructors, without
 --   first parsing it to a Grammar value. If every type in the sequence is

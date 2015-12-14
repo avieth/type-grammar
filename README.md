@@ -1,10 +1,12 @@
 # type-grammar
 
+Parsing sequences of data constructors.
+
 ## Motivation
 
-When we write terms of a DSL in Haskell, we use their logical form rather than
-their written form. In a DSL for a subset of PostgreSQL DELETE statements, for
-example, we would write something along the lines of
+When we write terms of a DSL in Haskell, we use their structural form rather
+than their written form. In a DSL for a subset of PostgreSQL DELETE commands,
+for example, we would write something along the lines of
 
 ```Haskell
 -- The form of PostgreSQL DELETES is this
@@ -13,25 +15,30 @@ example, we would write something along the lines of
 --      [ USING usinglist ]
 --      [ WHERE condition ]
 --
--- so we mirror its logical form.
-data DELETE where
-    DELETE :: table -> Maybe () -> Maybe usinglist -> Maybe condition -> DELETE
+data DELETE table usinglist condition where
+    DELETE
+        :: table
+        -> Bool -- True if ONLY is present
+        -> Maybe usinglist
+        -> Maybe condition
+        -> DELETE
 
-exampleTerm table condition = DELETE table Nothing Nothing (Just condition)
+exampleTerm table condition = DELETE table False Nothing (Just condition)
 ```
 
-This works just fine, but `type-grammar` offers an interesting alternative
-approach, in which the written--rather than logical--form of the DSL terms is
-used.
+With `type-grammar`, terms of `DELETE` can be safely parsed from
+sequences of data constructors which can be made to resemble written SQL.
 
 ```Haskell
-exampleTerm table condition = DELETE . FROM . table . WHERE . condition
+exampleSQL table condition = DELETE . FROM . table . WHERE . condition
+GrammarParse exampleTerm' GEnd = parseDerivedGrammar deleteGrammar (exampleSQL GEnd0)
+-- exampleTerm' == exampleTerm
 ```
 
 It's almost like writing the SQL as a string, but without losing type-safety,
-as the term can be checked against a grammar at compile time.
+as the form of the term can be checked against a grammar at compile time.
 
-This example is demonstrated further in [SQL.hs](./Examples/SQL.hs).
+This example is demonstrated with commentary in [SQL.hs](./Examples/SQL.hs).
 
 ## High-level overview of the method
 
@@ -41,7 +48,7 @@ Consider the typical pure functional parser, maybe a type like
 type Parser s t = s -> Maybe (t, s)
 ```
 
-Here we deal with the parsing of *terms* of type `s` to terms of type `t`.
+Here we deal with the parsing of terms of type `s` to terms of type `t`.
 Those `s` terms are composed of tokens, like `Char` in case `s ~ String`.
 
 Imagine a similar construction with `*` instead of `s` and `t`, where tokens of
@@ -52,52 +59,25 @@ We get something like this
 ```Haskell
 -- The parameter f indicates some type whose form is determined by the parsed
 -- type t.
-data Parse f s t = Parse (f t) s
+data Parse s t = Parse t s
 data NoParse
--- Types in the range of this family will be one of
---   Parse f s t
---   NoParse
-type family Parser (f :: * -> *) (s :: *) (t :: *) :: *
+-- This family will give either NoParse, or Parse s t.
+type family ParseIt (grammar :: *) (sequenceOfConstructors :: *) :: *
 ```
 
-If we take a finite set of types which can be chosen for `t`, then we can
-set out to define such a type-level parser. A fine choice for `t` is this
-set
+If we take a finite set of types which can be chosen for `grammar` in the domain
+of `ParseIt`, then we can implement it as a closed type family. A great choice
+is this set
 
 ```Haskell
-data Empty
-data Trivial
-data Symbol (t :: * -> *)
-data Product left right
-data Sum left right
+data GEmpty -- Never parses
+data GTrivial -- Always parses, consuming no input
+data GSymbol symbol next -- Parses if symbol is found
+data GProduct left right -- Parses if left then right parses
+data GSum left right -- Parses if either left or right parses
 ```
 
-These describe algebraic datatypes. Thus, they allows us to parse a sequence of
-types into some type which determines an algebraic datatype. Throwing these
-parameters onto a GADT, we can recover the actual value
-
-```Haskell
--- The parameter grammar forces a value of Grammar grammar to have the form of
--- a typical algebraic datatype.
--- Note that there's no constructor for Empty.
-data Grammar (grammar :: *) where
-    GrammarTrivial :: Grammar Trivial
-    GrammarSymbol :: symbol rest -> Grammar (Symbol symbol)
-    GrammarProduct :: (Grammar left, Grammar right) -> Grammar (Product left right)
-    GrammarSum :: Either (Grammar left) (Grammar right) -> Grammar (Sum left right)
-```
-
-Setting `f ~ Grammar`, we get this
-
-```Haskell
-type GrammarParse s t = Parse Grammar s t
-type family GrammarParser s t = Parser Grammar s t
-```
-
-An implementation of this type family allows GHC to check, at compile time,
-whether a given sequence of constructors matches a given grammar type (one of
-those 5 empty datatypes). A companion typeclass for this family allows GHC to
-infer, at compile time, how to construct a `Grammar` of the corresponding form,
-in case the sequence of constructors does parse in that form.
-
-This module provides such a type family and companion class.
+With `ParseIt` indicating the form of the parsed grammar, we can define
+typeclasses to mirror the family (so-called companion classes), with method
+to produce terms from sequences of term constructors corresponding to the
+input type (regular function composition of constructors).
