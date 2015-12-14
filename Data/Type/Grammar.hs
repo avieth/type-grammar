@@ -690,6 +690,61 @@ instance
         PClose (POneOfHere (PAllOfCons here (PAllOfCons (PRecurse recurse) PAllOfNil))) ->
             PManyCons here (inferFromUnderlying (Proxy :: Proxy (GMany grammar')) recurse)
 
+-- TODO GMany1, PMany1
+
+-- | Separate a grammar by another grammar.
+data GSepBy (grammar :: *) (grammarSep :: *)
+
+data PSepBy (grammars :: [*]) (grammarSeps :: [*]) where
+    PSepByOne :: grammar -> PSepBy '[grammar] '[]
+    PSepByMore
+        :: grammar
+        -> grammarSep
+        -> PSepBy grammars grammarSeps
+        -> PSepBy (grammar ': grammars) (grammarSep ': grammarSeps)
+
+type family PSepByGrammars (psepby :: *) :: [*] where
+    PSepByGrammars (PSepBy grammars grammarSeps) = grammars
+
+type family PSepBySeparators (psepby :: *) :: [*] where
+    PSepBySeparators (PSepBy grammars grammarSeps) = grammarSeps
+
+instance
+    ( DerivedGrammar grammar
+    , DerivedGrammar grammarSep
+    ) => DerivedGrammar (GSepBy grammar grammarSep)
+  where
+    type DerivedFrom (GSepBy grammar grammarSep) =
+        GAllOf '[GMany (GAllOf '[grammar, grammarSep]), grammar]
+
+instance
+    ( DerivedGrammar grammar
+    , DerivedGrammar grammarSep
+    ) => InferredGrammar (PAllOf '[PMany '[], inferred]) (GSepBy grammar grammarSep)
+  where
+    type InferredForm (PAllOf '[PMany '[], inferred]) (GSepBy grammar grammarSep) =
+        PSepBy '[inferred] '[]
+    inferFromUnderlying _ term = case term of
+        PAllOfCons _ (PAllOfCons inferred _) -> PSepByOne inferred
+
+instance
+    ( InferredGrammar (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)
+    ,   InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)
+      ~ PSepBy (PSepByGrammars (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
+               (PSepBySeparators (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
+    ) => InferredGrammar (PAllOf '[PMany (PAllOf '[inferred, inferredSep] ': inferredRest), inferredLast]) (GSepBy grammar grammarSep)
+  where
+    type InferredForm (PAllOf '[PMany (PAllOf '[inferred, inferredSep] ': inferredRest), inferredLast]) (GSepBy grammar grammarSep) =
+        PSepBy (inferred ': PSepByGrammars (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
+               (inferredSep ': PSepBySeparators (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
+    inferFromUnderlying gproxy term = case term of
+        PAllOfCons (PManyCons (PAllOfCons inferred (PAllOfCons inferredSep _)) inferredRest) rest ->
+            PSepByMore inferred inferredSep recurse
+          where
+            recurse = inferFromUnderlying gproxy
+                                          (PAllOfCons inferredRest rest)
+
+
 -- | An optional grammar.
 data GOptional (grammar :: *)
 
