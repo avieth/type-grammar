@@ -159,7 +159,7 @@ type family DeconstructGrammar (derivedGrammar :: *) :: * where
         GSum (DeconstructGrammar left) (DeconstructGrammar right)
     DeconstructGrammar GRecurse = GRecurse
     DeconstructGrammar (GClose close) = GClose (DeconstructGrammar close)
-    DeconstructGrammar (GOpen close) = GOpen (DeconstructGrammar close)
+    DeconstructGrammar (GOpen open) = GOpen (DeconstructGrammar open)
     DeconstructGrammar derived = DeconstructGrammar (DerivedFrom derived)
 
 
@@ -933,6 +933,12 @@ instance
     ) => ParseGrammar recursion anything (GClose grammar)
   where
     parseGrammar = parseGrammarClose
+
+instance
+    ( ParseGrammarOpen recursion anything (GOpen grammar)
+    ) => ParseGrammar recursion anything (GOpen grammar)
+  where
+    parseGrammar = parseGrammarOpen
 
 instance
     ( ParseGrammarProduct recursion anything (GProduct left right) ()
