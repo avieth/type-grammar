@@ -182,7 +182,7 @@ printDeleteCommand term = printGrammarSymbols " " term
 -- the inferred form composes a @GrammarParse@ term. For every symbolic
 -- grammar there is a unique associated inferred form.
 --
--- The parser understands only 7 symbolic grammars, the so-called *primitive
+-- The parser understands only 8 symbolic grammars, the so-called *primitive
 -- symbolic grammars*. Here they are, with their associated inferred forms:
 --
 --   GEmpty, PEmpty; the empty grammar, which matches nothing.
@@ -198,6 +198,8 @@ printDeleteCommand term = printGrammarSymbols " " term
 --       parser should jump back to the topmost symbolic grammar.
 --   GClose grammar, PClose inferred; closes a grammar to recursion, indicating
 --       that the next GRecurse should jump back to here.
+--   GOpen grammar, POpen inferred; effectively pops a recursion stack frame,
+--       undoing what a GClose does.
 --
 -- The symbolic grammar types are uninhabited, but all inferred forms except
 -- for PEmpty *are* inhabited.
