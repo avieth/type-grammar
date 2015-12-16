@@ -727,7 +727,7 @@ instance
         PClose (POneOfThere (POneOfHere PTrivial)) -> PManyNil
 
 instance
-    ( InferredGrammar recurse (GMany grammar')
+    ( DerivedGrammar grammar'
     -- This is obvious: PMany (PManyGrammars x) = x always
     , recurse ~ PMany (PManyGrammars recurse)
     ) => InferredGrammar (PClose (POneOf Z (PAllOf '[POpen grammar, PRecurse recurse]))) (GMany grammar')
