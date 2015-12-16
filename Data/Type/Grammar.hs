@@ -239,7 +239,7 @@ type family TransitiveInferredGrammarRec (recursive :: [*]) (recursiveDerived ::
     -- TBD WHY must we use (DerivedFrom goal) here? It seems, by observation,
     -- to be the right choice, but I cannot reason through it.
     TransitiveInferredGrammarRec (goal ': goals) (r ': rs) grammar GRecurse (PRecurse recurse) =
-        InferredForm (PRecurse (TransitiveInferredGrammarRec (goal ': goals) (r ': rs) (DerivedFrom goal) r recurse)) grammar
+        InferredForm (PRecurse (TransitiveInferredGrammarRec (goal ': goals) (r ': rs) (goal) r recurse)) grammar
 
     -- Notice our choice of new reference parameters: we just copy them from
     -- the second pair of parameters.
@@ -347,8 +347,8 @@ instance {-# OVERLAPS #-}
 
 
 instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec (goal ': goals) (r ': rs) (DerivedFrom goal) r recurse
-    , InferredGrammar (PRecurse (TransitiveInferredGrammarRec (goal ': goals) (r ': rs) (DerivedFrom goal) r recurse)
+    ( ReconstructInferredGrammarRec (goal ': goals) (r ': rs) goal r recurse
+    , InferredGrammar (PRecurse (TransitiveInferredGrammarRec (goal ': goals) (r ': rs) goal r recurse)
                       )
                       (grammar)
     ) => ReconstructInferredGrammarRec (goal ': goals) (r ': rs) grammar GRecurse (PRecurse recurse)
@@ -356,7 +356,7 @@ instance {-# OVERLAPS #-}
     reconstructInferredGrammarRec goalStack rStack grammar _ term = case term of
         PRecurse recurse -> inferFromUnderlying grammar (PRecurse recurse')
           where
-            recurse' = reconstructInferredGrammarRec goalStack rStack (Proxy :: Proxy (DerivedFrom goal)) r recurse
+            recurse' = reconstructInferredGrammarRec goalStack rStack goal r recurse
             goal :: Proxy goal
             goal = Proxy
             r :: Proxy r
@@ -723,18 +723,38 @@ instance
 
 instance
     ( InferredGrammar recurse (GMany grammar')
-    -- This equality is obviously true.
-    ,   InferredForm recurse (GMany grammar')
-      ~ PMany (PManyGrammars (InferredForm recurse (GMany grammar')))
+    -- This is obvious: PMany (PManyGrammars x) = x always
+    , recurse ~ PMany (PManyGrammars recurse)
     ) => InferredGrammar (PClose (POneOf Z (PAllOf '[POpen grammar, PRecurse recurse]))) (GMany grammar')
   where
     type InferredForm (PClose (POneOf Z (PAllOf '[POpen grammar, PRecurse recurse]))) (GMany grammar') =
-        PMany (grammar ': PManyGrammars (InferredForm recurse (GMany grammar')))
+        PMany (grammar ': PManyGrammars recurse)
     inferFromUnderlying proxy term = case term of
         PClose (POneOfHere (PAllOfCons (POpen here) (PAllOfCons (PRecurse recurse) PAllOfNil))) ->
-            PManyCons here (inferFromUnderlying (Proxy :: Proxy (GMany grammar')) recurse)
+            PManyCons here recurse
 
--- TODO GMany1, PMany1
+-- | At least 1 occurrence of a grammar in sequence.
+data GMany1 (grammar :: *)
+
+-- TODO with GHC 8.0 I believe we will be able to use NonEmpty * here...
+-- Or maybe we can even do that now?
+data PMany1 (inferred :: *) (inferreds :: [*]) where
+    PMany1 :: inferred -> PMany inferreds -> PMany1 inferred inferreds
+
+instance
+    ( DerivedGrammar grammar
+    ) => DerivedGrammar (GMany1 grammar)
+  where
+    type DerivedFrom (GMany1 grammar) = GProduct grammar (GMany grammar)
+
+instance
+    ( DerivedGrammar grammar
+    ) => InferredGrammar (PProduct inferred (PMany inferreds)) (GMany1 grammar)
+  where
+    type InferredForm (PProduct inferred (PMany inferreds)) (GMany1 grammar) =
+        PMany1 inferred inferreds
+    inferFromUnderlying _ term = case term of
+        PProduct inferred pmany -> PMany1 inferred pmany
 
 -- | Separate a grammar by another grammar.
 data GSepBy (grammar :: *) (grammarSep :: *)
