@@ -645,6 +645,11 @@ data Nat where
     Z :: Nat
     S :: Nat -> Nat
 
+pOneOfValue :: POneOf index anything -> anything
+pOneOfValue term = case term of
+    POneOfHere x -> x
+    POneOfThere rest -> pOneOfValue rest
+
 instance
     (
     ) => DerivedGrammar (GOneOf '[])
