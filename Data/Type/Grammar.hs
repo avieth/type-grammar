@@ -236,8 +236,6 @@ type family TransitiveInferredGrammarRec (recursive :: [*]) (recursiveDerived ::
     TransitiveInferredGrammarRec goal r grammar (GSum left right) (PSum ('Right right')) =
         InferredForm (PSum ('Right (TransitiveInferredGrammarRec goal r right (DerivedFrom right) right'))) grammar
 
-    -- TBD WHY must we use (DerivedFrom goal) here? It seems, by observation,
-    -- to be the right choice, but I cannot reason through it.
     TransitiveInferredGrammarRec (goal ': goals) (r ': rs) grammar GRecurse (PRecurse recurse) =
         InferredForm (PRecurse (TransitiveInferredGrammarRec (goal ': goals) (r ': rs) (goal) r recurse)) grammar
 
@@ -544,7 +542,7 @@ instance
     ( DerivedGrammar grammar
     ) => DerivedGrammar (GClose grammar)
   where
-    type DerivedFrom (GClose grammar) = GClose (DerivedFrom grammar)
+    type DerivedFrom (GClose grammar) = GClose grammar
 
 instance
     ( DerivedGrammar grammar
@@ -564,7 +562,7 @@ instance
     ( DerivedGrammar grammar
     ) => DerivedGrammar (GOpen grammar)
   where
-    type DerivedFrom (GOpen grammar) = GOpen (DerivedFrom grammar)
+    type DerivedFrom (GOpen grammar) = GOpen grammar
 
 instance
     ( DerivedGrammar grammar
@@ -784,34 +782,41 @@ instance
     ) => DerivedGrammar (GSepBy grammar grammarSep)
   where
     type DerivedFrom (GSepBy grammar grammarSep) =
-        GAllOf '[GMany (GAllOf '[grammar, grammarSep]), grammar]
+        GAllOf '[grammar, GMany (GAllOf '[grammarSep, grammar])]
 
 instance
     ( DerivedGrammar grammar
     , DerivedGrammar grammarSep
-    ) => InferredGrammar (PAllOf '[PMany '[], inferred]) (GSepBy grammar grammarSep)
+    ) => InferredGrammar (PAllOf '[inferred, PMany '[]]) (GSepBy grammar grammarSep)
   where
-    type InferredForm (PAllOf '[PMany '[], inferred]) (GSepBy grammar grammarSep) =
+    type InferredForm (PAllOf '[inferred, PMany '[]]) (GSepBy grammar grammarSep) =
         PSepBy '[inferred] '[]
     inferFromUnderlying _ term = case term of
-        PAllOfCons _ (PAllOfCons inferred _) -> PSepByOne inferred
+        PAllOfCons inferred _ -> PSepByOne inferred
 
 instance
-    ( InferredGrammar (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)
-    ,   InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)
-      ~ PSepBy (PSepByGrammars (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
-               (PSepBySeparators (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
-    ) => InferredGrammar (PAllOf '[PMany (PAllOf '[inferred, inferredSep] ': inferredRest), inferredLast]) (GSepBy grammar grammarSep)
+    ( DerivedGrammar grammar
+    , DerivedGrammar grammarSep
+    , InferredGrammar (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)
+    -- This is a clear fact about PSepBy and its relation to PSepByGrammars,
+    -- PSepBySeparators
+    ,   PSepBy (PSepByGrammars (InferredForm (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)))
+               (PSepBySeparators (InferredForm (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)))
+      ~ InferredForm (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)
+    ) => InferredGrammar (PAllOf '[inferred, PMany ((PAllOf '[inferredSep, inferred']) ': rest)]) (GSepBy grammar grammarSep)
   where
-    type InferredForm (PAllOf '[PMany (PAllOf '[inferred, inferredSep] ': inferredRest), inferredLast]) (GSepBy grammar grammarSep) =
-        PSepBy (inferred ': PSepByGrammars (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
-               (inferredSep ': PSepBySeparators (InferredForm (PAllOf '[PMany inferredRest, inferredLast]) (GSepBy grammar grammarSep)))
+    type InferredForm (PAllOf '[inferred, PMany ((PAllOf '[inferredSep, inferred']) ': rest)]) (GSepBy grammar grammarSep) =
+        PSepBy (inferred ': PSepByGrammars (InferredForm (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)))
+               (inferredSep ': PSepBySeparators (InferredForm (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)))
     inferFromUnderlying gproxy term = case term of
-        PAllOfCons (PManyCons (PAllOfCons inferred (PAllOfCons inferredSep _)) inferredRest) rest ->
-            PSepByMore inferred inferredSep recurse
-          where
-            recurse = inferFromUnderlying gproxy
-                                          (PAllOfCons inferredRest rest)
+        PAllOfCons inferred
+            (PAllOfCons
+            (PManyCons
+            (PAllOfCons inferredSep
+            (PAllOfCons inferred' _))
+            rest) _) -> PSepByMore inferred
+                                   inferredSep
+                                   (inferFromUnderlying gproxy (PAllOfCons inferred' (PAllOfCons rest PAllOfNil)))
 
 
 -- | An optional grammar.
