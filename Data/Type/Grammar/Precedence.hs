@@ -26,235 +26,238 @@ import Data.Proxy
 import Data.Type.Grammar
 
 -- Types to describe associativity of infix operators: left-, right-, or non.
-data Infixl (grammar :: *)
-data Infixr (grammar :: *)
-data Infix (grammar :: *)
+data Infixl (grammars :: [*])
+data Infixr (grammars :: [*])
+data Infix (grammars :: [*])
 
--- To handle infix grammars we use a method in which each operator is given its
--- own unique precedence level, according to its position in a list, and the
--- grammar is transformed into n+1 grammars: one for each precedence level
--- and one for the terminal grammar. As an example, addition and multiplication
--- where multiplication binds tighter, and numbers are the terminals, looks
--- like this:
+-- To handle infix grammars we use a method in which each precedence level
+-- induces a new grammar, which refers to the recursive case: the grammar
+-- with all of the higher-precedence operators. The base case is the
+-- terminal grammar, or anything between parens.
+-- For example, addition and multiplication, with the latter binding tighter,
+-- would decompose to something like this:
 --
---     A = B {+ B}
---     B = C {* C}
---     C = Number | ( A )
+--     A = B{+B}
+--     B = C{*C}
+--     C = Number | (A)
 --
--- where { x } means 0 or more occurrences of x.
+-- where {x} means 0 or more occurrences of x.
+
+-- | First parameter, @operators@, is a list of precedence levels. Each element
+--   of the list must be @Infixl grammars@, @Infixr grammars@, or
+--   @Infix grammars@, where the @grammars@ parameter is a list of symbolic
+--   grammars of infix operators. Thus each precedence level is either left-,
+--   right-, or non-associative (you can't mix different associativities of the
+--   same precedence).
+data GInfix (operators :: [*]) (base :: *) (leftParen :: *) (rightParen :: *)
+
+-- | GInfix is given in terms of GInfixOpen, so named because it relies upon
+--   a free occurrence of GRecurse in the grammar from which it is derived.
+instance DerivedGrammar (GInfix operators base leftParen rightParen) where
+    type DerivedFrom (GInfix operators base leftParen rightParen) =
+        GClose (GInfixOpen operators base leftParen rightParen)
+
+instance
+    (
+    ) => InferredGrammar (PClose (PInfix param)) (GInfix operators base leftParen rightParen)
+  where
+    type InferredForm (PClose (PInfix param)) (GInfix operators base leftParen rightParen) =
+        PInfix param
+    inferFromUnderlying _ (PClose term) = term
 
 data GInfixOpen (operators :: [*]) (base :: *) (leftParen :: *) (rightParen :: *)
 
 data Literal (literal :: *)
 data Operator (operator :: *) (left :: *) (right :: *)
 
--- What should this look like? The type parameter has to contain all of the
--- information about the structure of the parsed infix grammar:
-data PInfixOpen (inferred :: *) where
-    PInfixOpenLiteral
+-- | The inferred form of a GInfixOpen. It's the expression tree.
+data PInfix (inferred :: *) where
+    PInfixLiteral
         :: inferred
-        -> PInfixOpen (Literal inferred)
-    PInfixOpenOperator
+        -> PInfix (Literal inferred)
+    PInfixOperator
         :: left
         -> op
         -> right
-        -> PInfixOpen (Operator op left right)
+        -> PInfix (Operator op left right)
 
-type family PInfixAssociateLeftK (left :: *) (op :: *) (pinfix :: *) :: * where
-    PInfixAssociateLeftK left op (PInfixOpen (Literal inferred)) =
-        PInfixOpen (Operator op left (PInfixOpen (Literal inferred)))
-    PInfixAssociateLeftK left op (PInfixOpen (Operator op' left' right')) =
-        PInfixOpen (Operator op' (PInfixAssociateLeftK left op left') right')
-
-class PInfixAssociateLeft (left :: *) (op :: *) (pinfix :: *) where
-    pInfixAssociateLeft
-        :: left
-        -> op
-        -> pinfix
-        -> PInfixAssociateLeftK left op pinfix
-
-instance PInfixAssociateLeft left op (PInfixOpen (Literal inferred)) where
-    pInfixAssociateLeft left op literal =
-        PInfixOpenOperator left op literal
-
-instance
-    ( PInfixAssociateLeft left op left'
-    ) => PInfixAssociateLeft left op (PInfixOpen (Operator op' left' right'))
-  where
-    pInfixAssociateLeft left op (PInfixOpenOperator left' op' right') =
-        PInfixOpenOperator (pInfixAssociateLeft left op left') op' right'
-
+-- Derived grammar for 0 infix operators.
 instance DerivedGrammar (GInfixOpen '[] base leftParen rightParen) where
     type DerivedFrom (GInfixOpen '[] base leftParen rightParen) =
         GSum base (GAllOf '[leftParen, GRecurse, rightParen])
 
+-- Inferred grammar for 0 infix operators.
 instance InferredGrammar (PSum ('Left inferredBase)) (GInfixOpen '[] base leftParen rightParen) where
     type InferredForm (PSum ('Left inferredBase)) (GInfixOpen '[] base leftParen rightParen) =
-        PInfixOpen (Literal inferredBase)
+        PInfix (Literal inferredBase)
     inferFromUnderlying _ term = case term of
-        PSumLeft inferredBase -> PInfixOpenLiteral inferredBase
+        PSumLeft inferredBase -> PInfixLiteral inferredBase
 
--- | TBD is this one correct? @inferredRecurse@ should be a PInfixOpen.
-instance InferredGrammar (PSum ('Right (PAllOf '[inferredLeftParen, PRecurse inferredRecurse, inferredRightParen]))) (GInfixOpen '[] base leftParen rightParen) where
+instance
+    (
+    ) => InferredGrammar (PSum ('Right (PAllOf '[inferredLeftParen, PRecurse inferredRecurse, inferredRightParen]))) (GInfixOpen '[] base leftParen rightParen)
+  where
     type InferredForm (PSum ('Right (PAllOf '[inferredLeftParen, PRecurse inferredRecurse, inferredRightParen]))) (GInfixOpen '[] base leftParen rightParen) =
         inferredRecurse
     inferFromUnderlying proxy term = case term of
         PSumRight (PAllOfCons proxy (PAllOfCons (PRecurse recursive) _)) -> recursive
 
+-- Derived grammar for infix operators.
+-- We give something alongs the lines of this, if it means anything:
+--
+--   A = B[(1|2|..|n)B]
+--
+-- where B is the recursive case GInfixOpen grammarss base leftParen rightParen
+-- (containing grammars for all tighter-binding operators) and 1,2..n are the
+-- grammars in this Infix level.
+-- Informally: B, or 2 B's infixed by any of the infix operators.
 instance
-    ( DerivedGrammar (GInfixOpen grammars base leftParen rightParen)
-    ) => DerivedGrammar (GInfixOpen (Infix grammar ': grammars) base leftParen rightParen)
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    ) => DerivedGrammar (GInfixOpen (Infix grammars ': grammarss) base leftParen rightParen)
   where
-    type DerivedFrom (GInfixOpen (Infix grammar ': grammars) base leftParen rightParen) =
-        GProduct (DerivedFrom (GInfixOpen grammars base leftParen rightParen))
-                 (GOptional (GProduct grammar (DerivedFrom (GInfixOpen grammars base leftParen rightParen))))
+    type DerivedFrom (GInfixOpen (Infix grammars ': grammarss) base leftParen rightParen) =
+        GProduct (GInfixOpen grammarss base leftParen rightParen)
+                 (GOptional (GProduct (GOneOf grammars) (GInfixOpen grammarss base leftParen rightParen)))
 
+-- Inferred form for infix operators.
 instance
-    ( DerivedGrammar (GInfixOpen grammars base leftParen rightParen)
-    ) => InferredGrammar (PProduct left (POptional 'Nothing)) (GInfixOpen (Infix grammar ': grammars) base leftParen rightParen)
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    ) => InferredGrammar (PProduct (PInfix lower) (POptional 'Nothing)) (GInfixOpen (Infix grammars ': grammarss) base leftParen rightParen)
   where
-    type InferredForm (PProduct left (POptional 'Nothing)) (GInfixOpen (Infix grammar ': grammars) base leftParen rightParen) =
-        left
+    type InferredForm (PProduct (PInfix lower) (POptional 'Nothing)) (GInfixOpen (Infix grammars ': grammarss) base leftParen rightParen) =
+        PInfix lower
     inferFromUnderlying _ term = case term of
         PProduct left _ -> left
 
 instance
-    ( DerivedGrammar (GInfixOpen grammars base leftParen rightParen)
-    , InferredGrammar left (GInfixOpen grammars base leftParen rightParen)
-    , InferredGrammar right (GInfixOpen grammars base leftParen rightParen)
-    ) => InferredGrammar (PProduct left (POptional ('Just (PProduct op right)))) (GInfixOpen (Infix grammar ': grammars) base leftParen rightParen)
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    ) => InferredGrammar (PProduct (PInfix left) (POptional ('Just (PProduct (POneOf idx op) right)))) (GInfixOpen (Infix grammars ': grammarss) base leftParen rightParen)
   where
-    type InferredForm (PProduct left (POptional ('Just (PProduct op right)))) (GInfixOpen (Infix grammar ': grammars) base leftParen rightParen) =
-        PInfixOpen (Operator op
-                             (InferredForm left (GInfixOpen grammars base leftParen rightParen))
-                             (InferredForm right (GInfixOpen grammars base leftParen rightParen))
-                   )
+    type InferredForm (PProduct (PInfix left) (POptional ('Just (PProduct (POneOf idx op) right)))) (GInfixOpen (Infix grammars ': grammarss) base leftParen rightParen) =
+        PInfix (Operator (op) (PInfix left) right)
     inferFromUnderlying _ term = case term of
-        PProduct left (POptionalJust (PProduct op right)) ->
-            PInfixOpenOperator left' op right'
-          where
-            left' = inferFromUnderlying proxyRecursive left
-            right' = inferFromUnderlying proxyRecursive right
-            proxyRecursive :: Proxy (GInfixOpen grammars base leftParen rightParen)
-            proxyRecursive = Proxy
+        PProduct left (POptionalJust (PProduct poneOf right)) ->
+            PInfixOperator left (pOneOfValue poneOf) right
+
+-- Derived grammar for left-infix operators.
+-- We give something alongs the lines of this, if it means anything:
+--
+--   A = B{(1|2|..|n)B}
+--
+-- where B is the recursive case GInfixOpen grammarss base leftParen rightParen
+-- (containing grammars for all tighter-binding operators) and 1,2..n are the
+-- grammars in this Infix level.
+-- Informally: B, followed by 0 or more B's prefixed by any of the infix
+-- operators.
+instance
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    ) => DerivedGrammar (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen)
+  where
+    type DerivedFrom (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen) =
+        GProduct (GInfixOpen grammarss base leftParen rightParen)
+                 (GMany (GProduct (GOneOf grammars) (GInfixOpen grammarss base leftParen rightParen)))
 
 instance
-    ( DerivedGrammar (GInfixOpen grammars base leftParen rightParen)
-    ) => DerivedGrammar (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen)
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    ) => InferredGrammar (PProduct (PInfix lower) (PMany '[])) (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen)
   where
-    type DerivedFrom (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen) =
-        GProduct (DerivedFrom (GInfixOpen grammars base leftParen rightParen))
-                 (GMany (GProduct grammar (DerivedFrom (GInfixOpen grammars base leftParen rightParen))))
-
-instance
-    ( DerivedGrammar (GInfixOpen grammars base leftParen rightParen)
-    , InferredGrammar left (GInfixOpen grammars base leftParen rightParen)
-    ) => InferredGrammar (PProduct left (PMany '[])) (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen)
-  where
-    -- Since we DeriveForm recursively, we also have to InferredForm
-    -- recursively.
-    type InferredForm (PProduct left (PMany '[])) (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen) =
-        InferredForm left (GInfixOpen grammars base leftParen rightParen)
+    type InferredForm (PProduct (PInfix lower) (PMany '[])) (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen) =
+        PInfix lower
     inferFromUnderlying _ term = case term of
-        PProduct left _ -> inferFromUnderlying gproxy left
-      where
-        gproxy :: Proxy (GInfixOpen grammars base leftParen rightParen)
-        gproxy = Proxy
+        PProduct left _ -> left
 
 instance
-    ( InferredGrammar left (GInfixOpen (grammars) base leftParen rightParen)
-    , InferredGrammar (PProduct right (PMany rest)) (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen)
-    , PInfixAssociateLeft (InferredForm left (GInfixOpen grammars base leftParen rightParen))
-                          (op)
-                          (InferredForm (PProduct right (PMany rest)) (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen))
-    ) => InferredGrammar (PProduct left (PMany (PProduct op right ': rest))) (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen)
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    , InferredGrammar (PProduct (PInfix (Operator op (PInfix left) right)) (PMany rest)) (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen)
+    ) => InferredGrammar (PProduct (PInfix left) (PMany ((PProduct (POneOf idx op) (right)) ': rest))) (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen)
   where
-    type InferredForm (PProduct left (PMany (PProduct op right ': rest))) (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen) =
-        PInfixAssociateLeftK (InferredForm left (GInfixOpen grammars base leftParen rightParen))
-                             (op)
-                             (InferredForm (PProduct right (PMany rest)) (GInfixOpen (Infixl grammar ': grammars) base leftParen rightParen))
+    type InferredForm (PProduct (PInfix left) (PMany ((PProduct (POneOf idx op) (right)) ': rest))) (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen) =
+        InferredForm (PProduct (PInfix (Operator op (PInfix left) right)) (PMany rest)) (GInfixOpen (Infixl grammars ': grammarss) base leftParen rightParen)
     inferFromUnderlying gproxy term = case term of
-        PProduct left (PManyCons (PProduct op right) manyRest) ->
-            pInfixAssociateLeft left' op right'
-          where
-            left' = inferFromUnderlying gproxy' left
-            right' = inferFromUnderlying gproxy (PProduct right manyRest)
-            gproxy' :: Proxy (GInfixOpen grammars base leftParen rightParen)
-            gproxy' = Proxy
+        PProduct left (PManyCons (PProduct poneOf right) rest) ->
+            inferFromUnderlying gproxy (PProduct (PInfixOperator left (pOneOfValue poneOf) right) rest)
 
+-- Derived grammar for right-infix operators.
+-- It's the same as for left-infix operators; they differ, however, in their
+-- InferredGrammar instances.
+instance
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    ) => DerivedGrammar (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen)
+  where
+    type DerivedFrom (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen) =
+        GProduct (GInfixOpen grammarss base leftParen rightParen)
+                 (GMany (GProduct (GOneOf grammars) (GInfixOpen grammarss base leftParen rightParen)))
 
 instance
-    ( DerivedGrammar (GInfixOpen grammars base leftParen rightParen)
-    ) => DerivedGrammar (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen)
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    ) => InferredGrammar (PProduct (PInfix lower) (PMany '[])) (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen)
   where
-    type DerivedFrom (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen) =
-        GProduct (GMany (GProduct (DerivedFrom (GInfixOpen grammars base leftParen rightParen)) grammar))
-                 (DerivedFrom (GInfixOpen grammars base leftParen rightParen))
-
-instance
-    ( DerivedGrammar (GInfixOpen grammars base leftParen rightParen)
-    , InferredGrammar right (GInfixOpen grammars base leftParen rightParen)
-    ) => InferredGrammar (PProduct (PMany '[]) right) (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen)
-  where
-    -- Since we DeriveForm recursively, we also have to InferredForm
-    -- recursively.
-    type InferredForm (PProduct (PMany '[]) right) (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen) =
-        InferredForm right (GInfixOpen grammars base leftParen rightParen)
+    type InferredForm (PProduct (PInfix lower) (PMany '[])) (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen) =
+        PInfix lower
     inferFromUnderlying _ term = case term of
-        PProduct _ right -> inferFromUnderlying gproxy right
-      where
-        gproxy :: Proxy (GInfixOpen grammars base leftParen rightParen)
-        gproxy = Proxy
+        PProduct left _ -> left
 
 instance
-    ( InferredGrammar left (GInfixOpen (grammars) base leftParen rightParen)
-    , InferredGrammar (PProduct (PMany rest) right) (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen)
-    ) => InferredGrammar (PProduct (PMany (PProduct left op ': rest)) right) (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen)
+    ( DerivedGrammar (GInfixOpen grammarss base leftParen rightParen)
+    --, InferredGrammar (PProduct right (PMany rest)) (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen)
+    ) => InferredGrammar (PProduct (PInfix left) (PMany ((PProduct (POneOf idx op) (right)) ': rest))) (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen)
   where
-    -- Pay close attention to the choice of recursive InferredForms and
-    -- how we control recursion on the first parameter of GInfixOpen.
-    -- We treat left as though it was parsed from a lower grammar (with lesser
-    -- precedence operators), because we know it was. BUT we don't recursive on
-    -- that list for the remainder, because there may be more instances of
-    -- this very class which we need to hit.
-    type InferredForm (PProduct (PMany (PProduct left op ': rest)) right) (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen) =
-        PInfixOpen (Operator op
-                             (InferredForm left (GInfixOpen grammars base leftParen rightParen))
-                             (InferredForm (PProduct (PMany rest) right) (GInfixOpen (Infixr grammar ': grammars) base leftParen rightParen))
-                   )
+    type InferredForm (PProduct (PInfix left) (PMany ((PProduct (POneOf idx op) (right)) ': rest))) (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen) =
+        PInfix (Operator op
+                         (PInfix left)
+                         (InferredForm (PProduct right (PMany rest)) (GInfixOpen (Infixr grammars ': grammarss) base leftParen rightParen))
+               )
     inferFromUnderlying gproxy term = case term of
-        PProduct (PManyCons (PProduct left op) manyRest) right ->
-            PInfixOpenOperator left' op right'
-          where
-            left' = inferFromUnderlying gproxy' left
-            right' = inferFromUnderlying gproxy (PProduct manyRest right)
-            gproxy' :: Proxy (GInfixOpen grammars base leftParen rightParen)
-            gproxy' = Proxy
+        PProduct left (PManyCons (PProduct poneOf right) rest) ->
+            PInfixOperator left
+                           (pOneOfValue poneOf)
+                           undefined --(inferFromUnderlying gproxy (PProduct right rest))
 
-
+-- An example of use: grade school algebra.
 
 data Plus (ts :: [*]) t where
     Plus :: t -> Plus '[] t
 instance GrammarSymbol (Plus '[]) where
     splitGrammarSymbol (Plus t) = t
+data Minus (ts :: [*]) t where
+    Minus :: t -> Minus '[] t
+instance GrammarSymbol (Minus '[]) where
+    splitGrammarSymbol (Minus t) = t
 data Times (ts :: [*]) t where
     Times :: t -> Times '[] t
 instance GrammarSymbol (Times '[]) where
     splitGrammarSymbol (Times t) = t
+data Over (ts :: [*]) t where
+    Over :: t -> Over '[] t
+instance GrammarSymbol (Over '[]) where
+    splitGrammarSymbol (Over t) = t
+data Exponent (ts :: [*]) t where
+    Exponent :: t -> Exponent '[] t
+instance GrammarSymbol (Exponent '[]) where
+    splitGrammarSymbol (Exponent t) = t
 data Number (ts :: [*]) t where
     Number :: Int -> t -> Number '[] t
 instance GrammarSymbol (Number '[]) where
     splitGrammarSymbol (Number _ t) = t
+data OpenParen (ts :: [*]) t where
+    OpenParen :: t -> OpenParen '[] t
+instance GrammarSymbol (OpenParen '[]) where
+    splitGrammarSymbol (OpenParen t) = t
+data CloseParen (ts :: [*]) t where
+    CloseParen :: t -> CloseParen '[] t
+instance GrammarSymbol (CloseParen '[]) where
+    splitGrammarSymbol (CloseParen t) = t
 
-type Example1 = GInfixOpen '[Infixr (GSymbol Plus)]
-                           (GSymbol Number)
-                           (GEmpty)
-                           (GEmpty)
+type GradeSchool = GInfix '[
+      Infixl '[GSymbol Plus, GSymbol Minus]
+    , Infixl '[GSymbol Times, GSymbol Over]
+    , Infixl '[GSymbol Exponent]
+    ]
+    (GSymbol Number)
+    (GSymbol OpenParen)
+    (GSymbol CloseParen)
 
-type Sentence1 = Number '[] (Plus '[] (Number '[] (Plus '[] (Number '[] (Plus '[] (Number '[] GEnd))))))
-example1 = Number 1 . Plus . Number 2 . Plus . Number 4 . Plus . Number 5
-
-type Example2 = GInfixOpen '[Infixl (GSymbol Plus)]
-                           (GSymbol Number)
-                           (GEmpty)
-                           (GEmpty)
+example1 = Number 1 . Plus . Number 2 . Plus . Number 4 . Minus . Number 5 $ GEnd
+example2 = Number 1 . Times . OpenParen . Number 2 . Plus . Number 3 . CloseParen $ GEnd
+example3 = Number 1 . Plus . Number 2 . Over . Number 4 $ GEnd
+example4 = OpenParen . Number 1 . Plus . Number 2 . CloseParen . Over . Number 4 $ GEnd
