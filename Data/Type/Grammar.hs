@@ -25,95 +25,45 @@ Portability : non-portable (GHC only)
 
 module Data.Type.Grammar where
 
-import Data.Void
 import Data.Proxy
-import Data.Monoid
-import Data.String (IsString, fromString)
+
+import Debug.Trace
+
+data Symbol1 (ps :: [*]) (t :: *) where
+    Symbol1 :: t -> Symbol1 '[] t
+instance GrammarSymbol (Symbol1 '[]) where
+    splitGrammarSymbol (Symbol1 t) = t
+data Symbol2 (ps :: [*]) (t :: *) where
+    Symbol2 :: t -> Symbol2 '[] t
+instance GrammarSymbol (Symbol2 '[]) where
+    splitGrammarSymbol (Symbol2 t) = t
+
+{-
+GrammarParse q _ _ _ = parseGrammarV (Symbol1 GEnd) (Proxy :: Proxy (DeconstructGrammar (GMany (GSymbol Symbol1))))
+GrammarParse r _ _ _ = parseGrammarV (Symbol1 (Symbol1 GEnd)) (Proxy :: Proxy (DeconstructGrammar (GMany (GSymbol Symbol1))))
+GrammarParse s _ _ _ = parseGrammarV (Symbol1 (Symbol1 (Symbol1 GEnd))) (Proxy :: Proxy (DeconstructGrammar (GMany (GSymbol Symbol1))))
+GrammarParse t _ _ _ = parseGrammarV (Symbol1 (Symbol1 (Symbol1 (Symbol1 GEnd)))) (Proxy :: Proxy (DeconstructGrammar (GMany (GSymbol Symbol1))))
+-}
+--GrammarParse q _ _ _ = parseDerivedGrammar ((Symbol1 (Symbol1 (Symbol1 (Symbol1 (Symbol1 (Symbol1 GEnd))))))) (Proxy :: Proxy (GMany (GSymbol Symbol1)))
+--GrammarParse q _ _ _ = parseDerivedGrammar (Symbol1 (Symbol1 GEnd)) (Proxy :: Proxy (GMany (GSymbol Symbol1)))
+
+-- | TBD use an existing Nat implementation? It's so lightweight though, may
+--   not even be worth the extra package dependency (currently we depend only
+--   upon base).
+data Nat where
+    Z :: Nat
+    S :: Nat -> Nat
+
+type family NatSum (x :: Nat) (y :: Nat) :: Nat where
+    NatSum Z n = n
+    NatSum (S n) m = S (NatSum n m)
+
+type family DropSymbols (count :: Nat) (sym :: *) :: * where
+    DropSymbols Z any = any
+    DropSymbols (S n) (ty (ps :: [*]) rest) = DropSymbols n rest
 
 -- | Use this type in the parameter list for a Symbol.
 data P (t :: k) :: *
-
-type family ParseDerivedGrammarK (derivedGrammar :: *) (term :: *) :: * where
-    ParseDerivedGrammarK derivedGrammar term =
-        ParseDerivedGrammarChooseK derivedGrammar (ParseGrammarK ('[DeconstructGrammar derivedGrammar])
-                                                                 (GrammarMatch term)
-                                                                 (DeconstructGrammar derivedGrammar)
-                                                  )
-
-class ParseDerivedGrammar (derivedGrammar :: *) (term :: *) where
-    parseDerivedGrammar
-        :: Proxy derivedGrammar
-        -> term
-        -> ParseDerivedGrammarK derivedGrammar term
-
-instance
-    ( ParseDerivedGrammarChoose derivedGrammar (ParseGrammarK ('[DeconstructGrammar derivedGrammar])
-                                                              (GrammarMatch term)
-                                                              (DeconstructGrammar derivedGrammar)
-                                               )
-    , ParseGrammar ('[DeconstructGrammar derivedGrammar])
-                   (GrammarMatch term)
-                   (DeconstructGrammar derivedGrammar)
-    ) => ParseDerivedGrammar derivedGrammar term
-  where
-    parseDerivedGrammar derivedGrammar term =
-        parseDerivedGrammarChoose derivedGrammar (parseGrammar recursionStack (GrammarMatch term) primitive)
-      where
-        primitive :: Proxy (DeconstructGrammar derivedGrammar)
-        primitive = Proxy
-        recursionStack :: Proxy ('[DeconstructGrammar derivedGrammar])
-        recursionStack = Proxy
-
-type family ParseDerivedGrammarChooseK (derivedGrammar :: *) (parseResult :: *) :: * where
-    ParseDerivedGrammarChooseK derivedGrammar GrammarNoParse = GrammarNoParse
-    ParseDerivedGrammarChooseK derivedGrammar (GrammarParse primitiveParse remaining) =
-        GrammarParse (TransitiveInferredGrammar derivedGrammar primitiveParse) remaining
-
-class ParseDerivedGrammarChoose (derivedGrammar :: *) (parseResult :: *) where
-    parseDerivedGrammarChoose 
-        :: Proxy derivedGrammar
-        -> parseResult
-        -> ParseDerivedGrammarChooseK derivedGrammar parseResult
-
-instance
-    (
-    ) => ParseDerivedGrammarChoose derivedGrammar GrammarNoParse
-  where
-    parseDerivedGrammarChoose _ = id
-
-instance
-    ( ReconstructInferredGrammar derivedGrammar primitiveParse
-    ) => ParseDerivedGrammarChoose derivedGrammar (GrammarParse primitiveParse remaining)
-  where
-    parseDerivedGrammarChoose derivedGrammar parse = case parse of
-        GrammarParse primitiveParse remaining -> GrammarParse inferred remaining
-          where
-            inferred = reconstructInferredGrammar derivedGrammar primitiveParse
-
--- | The output of the parse, the so-called "inferred grammar". It's like the
---   input (so-called "symbolic grammar") but with type parameters of symbols
---   inferred.
-type family GrammarParseInferred (grammarParse :: *) :: * where
-    GrammarParseInferred (GrammarParse parsed rest) = parsed
-
--- | The remainder of the parse.
-type family GrammarParseRemainder (grammarParse :: *) :: * where
-    GrammarParseRemainder (GrammarParse parsed remainder) = remainder
-
--- | Assert that a term parses completely (remainder is GEnd) under a grammar.
-type FullParse derivedGrammar term =
-      GrammarParseRemainder (ParseDerivedGrammarK derivedGrammar term)
-    ~ GEnd
-
--- | This class recognizes complete parses (remainder is GEnd).
---   Assumes the convention that GEnd is always used to terminate the sequence
---   of types.
-class
-    ( GrammarParseRemainder (ParseGrammarK '[grammar] term grammar) ~ GEnd
-    ) => CompleteParse term grammar
-instance
-    ( GrammarParseRemainder (ParseGrammarK '[grammar] term grammar) ~ GEnd
-    ) => CompleteParse term grammar
 
 -- | Anything which can be used as a symbol in a grammar. This class shows how
 --   to pop it off and obtain the tail of the sequence. It's analagous to
@@ -162,247 +112,303 @@ type family DeconstructGrammar (derivedGrammar :: *) :: * where
     DeconstructGrammar (GOpen open) = GOpen (DeconstructGrammar open)
     DeconstructGrammar derived = DeconstructGrammar (DerivedFrom derived)
 
+-- We have the derived grammars and their inferred forms (call them higher
+-- inferred forms), and we have the primitive grammars and their inferred
+-- forms (primitive inferred forms). It is taken for granted that a higher
+-- inferred form can be produced from the inferred form of the grammar from
+-- which its grammar is derived. This relationship is witnessed by the
+-- InferredGrammar class.
+--
+-- Suppose we have in hand the complete derivation of a derived grammar, i.e.
+-- a list of types, '[ d_1, .., d_n ] such that DerivedFrom d_k = d_{k+1}
+-- and where d_n is a primitive grammar.
+--
+-- We want to compute not only the higher inferred form, but every intermediate
+-- type necessary in order to direct the selection of InferredGrammar instances
+-- which give rise to the value for that higher inferred form.
+-- The crucial point: instance constraints for reconstruction must *NOT*
+-- contain potentially large type family applications.
+-- The only way I see fit to do this is by building a derivation *tree*; a
+-- list will not do.
+--
+-- Yes, what we require is a derivation tree.
+-- For a derived grammar, record every DerivedFrom until a primitive form is
+-- reached. If it is one of the 5 recursive forms, place a derivation tree in
+-- its parameter(s). The head of each list will therefore be a primitive form.
+-- To reconstruct, inspect the head of the list. If it's a primitive form,
+-- reconstruct its children (against the inferred primitive form that we have
+-- in hand! because presumably we have just parsed a primitive grammar!).
+-- If it's not a primitive form, use inferFromUnderlying on the current inferred
+-- form against the current symbolic grammar in the list to get the next
+-- inferred form. Yeah... So from the derivation tree the ultimate inferred
+-- form is determined? Seems so. But will it be computed efficiently?
 
--- | Reconstruct the inferred grammar of a symbolic grammar from the inferred
---   grammar of a *primitive* symbolic grammar, i.e. something that comes
---   out of ParseGrammarK.
-type family TransitiveInferredGrammar (symbolic :: *) (inferred :: *) where
-    TransitiveInferredGrammar symbolic inferred =
-        TransitiveInferredGrammarRec ('[symbolic])
-                                     ('[DerivedFrom symbolic])
-                                     (symbolic)
-                                     (DerivedFrom symbolic)
-                                     (inferred)
+-- | TODO Confusing terminology. This means a *shallow* primitive, so that
+--   a GProduct left right is primitive even if left and right are not
+--   primitive.
+type family IsPrimitive (grammar :: *) :: Bool where
+    IsPrimitive GEmpty = 'True
+    IsPrimitive GTrivial = 'True
+    IsPrimitive (GSymbol sym) = 'True
+    IsPrimitive GRecurse = 'True
+    IsPrimitive (GClose closed) = 'True
+    IsPrimitive (GOpen opened) = 'True
+    IsPrimitive (GProduct left right) = 'True
+    IsPrimitive (GSum left right) = 'True
+    IsPrimitive nonPrimitive = 'False
 
--- | Companion class for TransitiveInferredGrammar.
-class ReconstructInferredGrammar (symbolic :: *) (inferred :: *) where
-    reconstructInferredGrammar
-        :: Proxy symbolic
-        -> inferred
-        -> TransitiveInferredGrammar symbolic inferred
+-- The 8 primitive symbolic grammars, differing only in that the recursive
+-- symbol, DRecurse, has a parameter. They are for use in the derivation
+-- tree.
+data DEmpty
+data DTrivial
+data DSymbol sym
+data DProduct left right
+data DSum left right
+data DRecurse recurse
+data DClose close
+data DOpen open
+
+-- | Call with @primitiveInferred@ as the inferred output of a successful
+--   parse of a primitive grammar via @ParseGrammarK@. @grammar@ is any
+--   derived symbolic grammar.
+--
+--   TODO describe in great detail the form of the derivation tree.
+--
+--   TBD need to handle a recursion stack here? When we reach a GRecurse,
+--   we must be careful to infer against top of stack.
+--   Hm, but perhaps that needn't be in the type family, but only in the
+--   class.
+--   So from the GrammarDerivationTree and the recursion stack types, can we
+--   come up with a term of type
+--   @GrammarDerivationTreeInferredForm derivationTree@?
+-- 
+type family GrammarDerivationTree (recursionStack :: [*]) (grammar :: *) (primitiveInferred :: *) :: [(*, *)] where
+    GrammarDerivationTree recursionStack grammar primitiveInferred =
+        GrammarDerivationTree2 (IsPrimitive grammar) recursionStack grammar primitiveInferred
+
+-- An invariant that we must keep: for every element of derivation tree (list
+-- of tuples) we have that the first one is a symbolic grammar type and
+-- the second is its associated inferred form. 
+type family GrammarDerivationTree2 (isPrimitive :: Bool) (recursionStack :: [*]) (grammar :: *) (primitiveInferred :: *) :: [(*, *)] where
+
+    GrammarDerivationTree2 'True recursionStack GEmpty PEmpty = '[ '(DEmpty, PEmpty) ]
+
+    GrammarDerivationTree2 'True recursionStack GTrivial PTrivial = '[ '(DTrivial, PTrivial) ]
+
+    GrammarDerivationTree2 'True recursionStack (GSymbol sym) (PSymbol sym ps) = '[ '(DSymbol sym, PSymbol sym ps) ]
+
+    GrammarDerivationTree2 'True (top ': stack) GRecurse (PRecurse recurse) = 
+        GrammarDerivationTreeRecurse (GrammarDerivationTree (top ': stack) top recurse)
+
+    GrammarDerivationTree2 'True recursionStack (GClose closed) (PClose closed') =
+        GrammarDerivationTreeClose (GrammarDerivationTree (GClose closed ': recursionStack) closed closed')
+
+    GrammarDerivationTree2 'True (top ': stack) (GOpen opened) (POpen opened') =
+        GrammarDerivationTreeOpen (GrammarDerivationTree stack opened opened')
+
+    GrammarDerivationTree2 'True recursionStack (GProduct left right) (PProduct count left' right') =
+        GrammarDerivationTreeProduct count
+                                     (GrammarDerivationTree recursionStack left left')
+                                     (GrammarDerivationTree recursionStack right right')
+
+    -- NB we ditch the unused branch, anticipating a performance win.
+    GrammarDerivationTree2 'True recursionStack (GSum left right) (PSum ('Left left')) =
+        GrammarDerivationTreeSumLeft (GrammarDerivationTree recursionStack left left')
+
+    GrammarDerivationTree2 'True recursionStack (GSum left right) (PSum ('Right right')) =
+        GrammarDerivationTreeSumRight (GrammarDerivationTree recursionStack right right')
+
+    -- A non-primitive grammar type. We compute the derivation tree for
+    -- the grammar from which it's derived and then place it at the front of
+    -- the list via GrammarDerivationTreeCons, which uses InferredForm.
+    GrammarDerivationTree2 'False recursionStack grammar primitiveInferred =
+        GrammarDerivationTreeCons grammar (GrammarDerivationTree recursionStack (DerivedFrom grammar) primitiveInferred)
+
+type family GrammarDerivationTreeRecurse (derivationTree :: [(*, *)]) :: [(*, *)] where
+    GrammarDerivationTreeRecurse derivationTree = '[ '(
+          DRecurse derivationTree
+        , PRecurse (GrammarDerivationTreeInferredForm derivationTree)
+        )]
+
+type family GrammarDerivationTreeClose (derivationTree :: [(*, *)]) :: [(*, *)] where
+    GrammarDerivationTreeClose derivationTree = '[ '(
+          DClose derivationTree
+        , PClose (GrammarDerivationTreeInferredForm derivationTree)
+        )]
+
+type family GrammarDerivationTreeOpen (derivationTree :: [(*, *)]) :: [(*, *)] where
+    GrammarDerivationTreeOpen derivationTree = '[ '(
+          DOpen derivationTree
+        , POpen (GrammarDerivationTreeInferredForm derivationTree)
+        )]
+
+type family GrammarDerivationTreeProduct (count :: Nat) (derivationTreeLeft :: [(*, *)]) (derivationTreeRight :: [(*, *)]) :: [(*, *)] where
+    GrammarDerivationTreeProduct count left right = '[ '(
+          DProduct left right
+        , PProduct count (GrammarDerivationTreeInferredForm left) (GrammarDerivationTreeInferredForm right)
+        )]
+
+type family GrammarDerivationTreeSumLeft (derivationTree :: [(*, *)]) :: [(*, *)] where
+    GrammarDerivationTreeSumLeft derivationTree = '[ '(
+          DSum derivationTree SummandRemoved
+        , PSum ('Left (GrammarDerivationTreeInferredForm derivationTree))
+        )]
+
+type family GrammarDerivationTreeSumRight (derivationTree :: [(*, *)]) :: [(*, *)] where
+    GrammarDerivationTreeSumRight derivationTree = '[ '(
+          DSum SummandRemoved derivationTree
+        , PSum ('Right (GrammarDerivationTreeInferredForm derivationTree))
+        )]
+
+-- | To cons a new entry in a derivation tree, we must exploit @InferredForm@,
+--   using the inferred form of the head of the tail.
+type family GrammarDerivationTreeCons (grammar :: *) (tail :: [(*, *)]) :: [(*, *)] where
+    -- NB: @symbolic ~ DerivedFrom grammar@ by construction (if we've done
+    -- anything right!).
+    GrammarDerivationTreeCons grammar ( '(symbolic, inferred) ': rest ) =
+        '(grammar, InferredForm inferred grammar) ': '(symbolic, inferred) ': rest
+
+-- | A type to indicate that a summand of a symbolic grammar is removed from
+--   a derivation tree because it is irrelevant; the other branch was
+--   chosen by the parser.
+data SummandRemoved
+
+-- | Get the highest-level inferred form from a derivation tree. That's the
+--   second component of the head of the list.
+--   Relies upon the assumption that @derivationTree@ was produced by
+--   @GrammarDerivationTree@.
+type family GrammarDerivationTreeInferredForm (derivationTree :: [(*, *)]) :: * where
+    GrammarDerivationTreeInferredForm ( '(symbolic, inferred) ': rest ) = inferred
+
+-- | A companion class for @GrammarDerivationTree@. @outcome@, in practice,
+--   shall be
+--
+--     @GrammarDerivationTreeInferredForm derivationTree@
+--
+--   whenever
+--
+--     @derivationTree = GrammarDerivationTree '[grammar] grammar primitiveInferred@
+--
+class ReconstructGrammarK (derivationTree :: [(*, *)]) (primitiveInferred :: *) (outcome :: *) where
+    reconstructGrammarK
+        :: Proxy derivationTree
+        -> primitiveInferred
+        -> outcome
 
 instance
-    ( ReconstructInferredGrammarRec ('[symbolic]) ('[DerivedFrom symbolic]) (symbolic) (DerivedFrom symbolic) (inferred)
-    ) => ReconstructInferredGrammar symbolic inferred
+    (
+    ) => ReconstructGrammarK '[ '(DEmpty, PEmpty) ] PEmpty PEmpty
   where
-    reconstructInferredGrammar symbolic =
-        reconstructInferredGrammarRec (Proxy :: Proxy '[symbolic])
-                                      (Proxy :: Proxy '[DerivedFrom symbolic])
-                                      (symbolic)
-                                      (derived)
+    reconstructGrammarK _ = id
+
+instance
+    (
+    ) => ReconstructGrammarK '[ '(DTrivial, PTrivial) ] PTrivial PTrivial
+  where
+    reconstructGrammarK _ = id
+
+instance
+    (
+    ) => ReconstructGrammarK '[ '(DSymbol sym, PSymbol sym ps) ] (PSymbol sym ps) (PSymbol sym ps)
+  where
+    reconstructGrammarK _ = id
+
+instance
+    ( ReconstructGrammarK recurse recurse' recurse''
+    ) => ReconstructGrammarK '[ '(DRecurse recurse, PRecurse recurse'') ] (PRecurse recurse') (PRecurse recurse'')
+  where
+    reconstructGrammarK _ (PRecurse recurse') =
+        PRecurse reconstructed
       where
-        derived :: Proxy (DerivedFrom symbolic)
-        derived = Proxy
+        recurse :: Proxy recurse
+        recurse = Proxy
+        reconstructed :: recurse''
+        reconstructed = reconstructGrammarK recurse recurse'
 
--- | Reconstruct the inferred grammar of a symbolic grammar from the inferred
---   grammar of a *primitive* symbolic grammar, i.e. something that comes
---   out of ParseGrammarK.
---
---   Observe how this one is used by @TransitiveInferredGrammar.
---
---   The first two parameters of this family, @recursive@ and
---   @recursiveDerived@, serve as memory for use in recurse/close cases.
---   They are the @grammar@ and @derivedFrom@ at the most recent observation of
---   @GClose@, or at the first use of this family (top of the call stack, if
---   you will).
---
---   The second pair of parameters, @grammar@ and @derivedFrom@, must always
---   be such that @derivedFrom ~ DerivedFrom grammar@. This is useful
---   because we hold the convention that we can construct the inferred form
---   of a grammar from the inferred form of the grammar from which it was
---   derived. That second parameter in the pair, @derivedFrom@, also controls
---   recursion in this family: as soon as it becomes a primitive symbolic
---   grammar, we can appeal to InferredFrom.
-type family TransitiveInferredGrammarRec (recursive :: [*]) (recursiveDerived :: [*]) (grammar :: *) (derivedFrom :: *) (inferred :: *) :: * where
-
-    TransitiveInferredGrammarRec goal r grammar GEmpty PEmpty =
-        InferredForm PEmpty grammar
-
-    TransitiveInferredGrammarRec goal r grammar GTrivial PTrivial =
-        InferredForm PTrivial grammar
-
-    TransitiveInferredGrammarRec goal r grammar (GSymbol symbol) (PSymbol symbol parameters) =
-        InferredForm (PSymbol symbol parameters) grammar
-
-    TransitiveInferredGrammarRec goal r grammar (GProduct left right) (PProduct left' right') =
-        InferredForm (PProduct (TransitiveInferredGrammarRec goal r left (DerivedFrom left) left')
-                               (TransitiveInferredGrammarRec goal r right (DerivedFrom right) right')
-                     )
-                     (grammar)
-
-    TransitiveInferredGrammarRec goal r grammar (GSum left right) (PSum ('Left left')) =
-        InferredForm (PSum ('Left (TransitiveInferredGrammarRec goal r left (DerivedFrom left) left'))) grammar
-
-    TransitiveInferredGrammarRec goal r grammar (GSum left right) (PSum ('Right right')) =
-        InferredForm (PSum ('Right (TransitiveInferredGrammarRec goal r right (DerivedFrom right) right'))) grammar
-
-    TransitiveInferredGrammarRec (goal ': goals) (r ': rs) grammar GRecurse (PRecurse recurse) =
-        InferredForm (PRecurse (TransitiveInferredGrammarRec (goal ': goals) (r ': rs) (goal) r recurse)) grammar
-
-    -- Notice our choice of new reference parameters: we just copy them from
-    -- the second pair of parameters.
-    TransitiveInferredGrammarRec goal r grammar (GClose grammar') (PClose grammar'') =
-        InferredForm (PClose (TransitiveInferredGrammarRec (grammar ': goal) ((GClose grammar') ': r) grammar' (DerivedFrom grammar') grammar''))
-                     (grammar)
-
-    TransitiveInferredGrammarRec (goal ': goals) (r ': rs) grammar (GOpen grammar') (POpen grammar'') =
-        InferredForm (POpen (TransitiveInferredGrammarRec goals rs grammar' (DerivedFrom grammar') grammar''))
-                     (grammar)
-
-    TransitiveInferredGrammarRec goal r grammar grammar inferred = CouldNotInfer goal r grammar inferred
-
-    -- In this case, we have not reached a primitive form, so all we can do
-    -- is recursive through DerivedFrom.
-    TransitiveInferredGrammarRec goal r grammar grammar' inferred =
-        InferredForm (TransitiveInferredGrammarRec goal r (DerivedFrom grammar) (DerivedFrom grammar') inferred) grammar
-
--- A type for use in TransitiveInferredGrammar. In case the grammar could not
--- be reconstructed, you get this somewhere in a tree of InferredFrom.
--- The parameter should indicate why the family got stuck.
-data CouldNotInfer goal r grammar inferred = CouldNotInfer
-
--- | Companion class for TransitiveInferredGrammarRec.
-class ReconstructInferredGrammarRec (recursive :: [*]) (recursiveDerived :: [*]) (grammar :: *) (derivedFrom :: *) (inferred :: *) where
-    reconstructInferredGrammarRec
-        :: Proxy recursive
-        -> Proxy recursiveDerived
-        -> Proxy grammar
-        -> Proxy derivedFrom
-        -> inferred
-        -> TransitiveInferredGrammarRec recursive recursiveDerived grammar derivedFrom inferred
-
---    TransitiveInferredGrammarRec goal r grammar GEmpty PEmpty =
---        InferredForm PEmpty grammar
-instance {-# OVERLAPS #-}
-    ( InferredGrammar PEmpty grammar
-    ) => ReconstructInferredGrammarRec goal r grammar GEmpty PEmpty
+instance
+    ( ReconstructGrammarK closed closed' closed''
+    ) => ReconstructGrammarK '[ '(DClose closed, PClose closed'') ] (PClose closed') (PClose closed'')
   where
-    reconstructInferredGrammarRec _ _ grammar _ = inferFromUnderlying grammar
+    reconstructGrammarK _ (PClose closed') =
+        PClose reconstructed
+      where
+        closed :: Proxy closed
+        closed = Proxy
+        reconstructed :: closed''
+        reconstructed = reconstructGrammarK closed closed'
 
---    TransitiveInferredGrammarRec goal r grammar GTrivial PTrivial =
---        InferredForm PTrivial grammar
-instance {-# OVERLAPS #-}
-    ( InferredGrammar PTrivial grammar
-    ) => ReconstructInferredGrammarRec goal r grammar GTrivial PTrivial
+instance
+    ( ReconstructGrammarK opened opened' opened''
+    ) => ReconstructGrammarK '[ '(DOpen opened, POpen opened'') ] (POpen opened') (POpen opened'')
   where
-    reconstructInferredGrammarRec _ _ grammar _ = inferFromUnderlying grammar
+    reconstructGrammarK _ (POpen opened') =
+        POpen reconstructed
+      where
+        opened :: Proxy opened
+        opened = Proxy
+        reconstructed :: opened''
+        reconstructed = reconstructGrammarK opened opened'
 
---    TransitiveInferredGrammarRec goal r grammar (GSymbol symbol) (PSymbol symbol parameters) =
---        InferredForm (PSymbol symbol parameters) grammar
-instance {-# OVERLAPS #-}
-    ( InferredGrammar (PSymbol symbol parameters) grammar
-    ) => ReconstructInferredGrammarRec goal r grammar (GSymbol symbol) (PSymbol symbol parameters)
+instance
+    ( ReconstructGrammarK left left' left''
+    , ReconstructGrammarK right right' right''
+    ) => ReconstructGrammarK '[ '(DProduct left right, PProduct count left'' right'') ] (PProduct count left' right') (PProduct count left'' right'')
   where
-    reconstructInferredGrammarRec _ _ grammar _ = inferFromUnderlying grammar
+    reconstructGrammarK _ (PProduct count left' right') =
+        PProduct count left'' right''
+      where
+        left :: Proxy left
+        left = Proxy
+        right :: Proxy right
+        right = Proxy
+        left'' :: left''
+        left'' = reconstructGrammarK left left'
+        right'' :: right''
+        right'' = reconstructGrammarK right right'
 
---    TransitiveInferredGrammarRec goal r grammar (GProduct left right) (PProduct left' right') =
---        InferredForm (PProduct (TransitiveInferredGrammarRec goal r left (DerivedFrom left) left')
---                               (TransitiveInferredGrammarRec goal r right (DerivedFrom right) right')
---                     )
---                     (grammar)
-instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec goal r left (DerivedFrom left) left'
-    , ReconstructInferredGrammarRec goal r right (DerivedFrom right) right'
-    , InferredGrammar (PProduct (TransitiveInferredGrammarRec goal r left (DerivedFrom left) left')
-                                (TransitiveInferredGrammarRec goal r right (DerivedFrom right) right')
-                      )
-                      (grammar)
-    ) => ReconstructInferredGrammarRec goal r grammar (GProduct left right) (PProduct left' right')
+instance
+    ( ReconstructGrammarK left left' left''
+    ) => ReconstructGrammarK '[ '(DSum left SummandRemoved, PSum ('Left left'')) ] (PSum ('Left left')) (PSum ('Left left''))
   where
-    reconstructInferredGrammarRec goal r grammar _ term = case term of
-        PProduct left' right' -> inferFromUnderlying grammar (PProduct left'' right'')
-          where
-            left'' = reconstructInferredGrammarRec goal r (Proxy :: Proxy left) (Proxy :: Proxy (DerivedFrom left)) left'
-            right'' = reconstructInferredGrammarRec goal r (Proxy :: Proxy right) (Proxy :: Proxy (DerivedFrom right)) right'
+    reconstructGrammarK _ (PSumLeft left') =
+        PSumLeft left''
+      where
+        left :: Proxy left
+        left = Proxy
+        left'' :: left''
+        left'' = reconstructGrammarK left left'
 
---    TransitiveInferredGrammarRec goal r grammar (GSum left right) (PSum ('Left left')) =
---        InferredForm (PSum ('Left (TransitiveInferredGrammarRec goal r left (DerivedFrom left) left'))) grammar
-instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec goal r left (DerivedFrom left) left'
-    , InferredGrammar (PSum ('Left (TransitiveInferredGrammarRec goal r left (DerivedFrom left) left'))
-                      )
-                      (grammar)
-    ) => ReconstructInferredGrammarRec goal r grammar (GSum left right) (PSum ('Left left'))
+instance
+    ( ReconstructGrammarK right right' right''
+    ) => ReconstructGrammarK '[ '(DSum SummandRemoved right, PSum ('Right right'')) ] (PSum ('Right right')) (PSum ('Right right''))
   where
-    reconstructInferredGrammarRec goal r grammar _ term = case term of
-        PSumLeft left' -> inferFromUnderlying grammar (PSumLeft left'')
-          where
-            left'' = reconstructInferredGrammarRec goal r (Proxy :: Proxy left) (Proxy :: Proxy (DerivedFrom left)) left'
+    reconstructGrammarK _ (PSumRight right') =
+        PSumRight right''
+      where
+        right :: Proxy right
+        right = Proxy
+        right'' :: right''
+        right'' = reconstructGrammarK right right'
 
---    TransitiveInferredGrammarRec goal r grammar (GSum left right) (PSum ('Right right')) =
---        InferredForm (PSum ('Right (TransitiveInferredGrammarRec goal r right (DerivedFrom right) right'))) grammar
-instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec goal r right (DerivedFrom right) right'
-    , InferredGrammar (PSum ('Right (TransitiveInferredGrammarRec goal r right (DerivedFrom right) right'))
-                      )
-                      (grammar)
-    ) => ReconstructInferredGrammarRec goal r grammar (GSum right right) (PSum ('Right right'))
+-- Use of the double-cons pattern prevents overlap, I believe.
+instance
+    ( GrammarDerivationTreeInferredForm (the ': rest) ~ underlyingInferred
+    , InferredForm underlyingInferred grammar ~ inferred
+    , InferredGrammar underlyingInferred grammar
+    , ReconstructGrammarK (the ': rest) primitiveInferred underlyingInferred
+    ) => ReconstructGrammarK ( '(grammar, inferred) ': the ': rest ) primitiveInferred inferred
   where
-    reconstructInferredGrammarRec goal r grammar _ term = case term of
-        PSumRight right' -> inferFromUnderlying grammar (PSumRight right'')
-          where
-            right'' = reconstructInferredGrammarRec goal r (Proxy :: Proxy right) (Proxy :: Proxy (DerivedFrom right)) right'
+    reconstructGrammarK _ primitiveInferred =
+        inferFromUnderlying grammar reconstructed
+      where
+        grammar :: Proxy grammar
+        grammar = Proxy
+        theRest :: Proxy (the ': rest)
+        theRest = Proxy
+        reconstructed :: underlyingInferred
+        reconstructed = reconstructGrammarK theRest primitiveInferred
 
-
-instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec (goal ': goals) (r ': rs) goal r recurse
-    , InferredGrammar (PRecurse (TransitiveInferredGrammarRec (goal ': goals) (r ': rs) goal r recurse)
-                      )
-                      (grammar)
-    ) => ReconstructInferredGrammarRec (goal ': goals) (r ': rs) grammar GRecurse (PRecurse recurse)
-  where
-    reconstructInferredGrammarRec goalStack rStack grammar _ term = case term of
-        PRecurse recurse -> inferFromUnderlying grammar (PRecurse recurse')
-          where
-            recurse' = reconstructInferredGrammarRec goalStack rStack goal r recurse
-            goal :: Proxy goal
-            goal = Proxy
-            r :: Proxy r
-            r = Proxy
-
-instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec (grammar ': goal) (GClose grammar' ': r) grammar' (DerivedFrom grammar') grammar''
-    , InferredGrammar (PClose (TransitiveInferredGrammarRec (grammar ': goal) (GClose grammar' ': r) grammar' (DerivedFrom grammar') grammar'')
-                      )
-                      (grammar)
-    ) => ReconstructInferredGrammarRec goal r grammar (GClose grammar') (PClose grammar'')
-  where
-    reconstructInferredGrammarRec goal r grammar gclose term = case term of
-        PClose grammar'' -> inferFromUnderlying grammar (PClose close)
-          where
-            close = reconstructInferredGrammarRec goalStack rStack (Proxy :: Proxy grammar') (Proxy :: Proxy (DerivedFrom grammar')) grammar''
-            goalStack :: Proxy (grammar ': goal)
-            goalStack = Proxy
-            rStack :: Proxy (GClose grammar' ': r)
-            rStack = Proxy
-
-instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec goals rs grammar' (DerivedFrom grammar') grammar''
-    , InferredGrammar (POpen (TransitiveInferredGrammarRec goals rs grammar' (DerivedFrom grammar') grammar'')
-                      )
-                      (grammar)
-    ) => ReconstructInferredGrammarRec (goal ': goals) (r ': rs) grammar (GOpen grammar') (POpen grammar'')
-  where
-    reconstructInferredGrammarRec goal r grammar gclose term = case term of
-        POpen grammar'' -> inferFromUnderlying grammar (POpen close)
-          where
-            close = reconstructInferredGrammarRec goalStack rStack (Proxy :: Proxy grammar') (Proxy :: Proxy (DerivedFrom grammar')) grammar''
-            goalStack :: Proxy goals
-            goalStack = Proxy
-            rStack :: Proxy rs
-            rStack = Proxy
-
---    TransitiveInferredGrammarRec goal r grammar grammar' inferred =
---        InferredForm (TransitiveInferredGrammarRec goal r (DerivedFrom grammar) (DerivedFrom grammar') inferred) grammar
-instance {-# OVERLAPS #-}
-    ( ReconstructInferredGrammarRec goal r (DerivedFrom grammar) (DerivedFrom grammar') inferred
-    , InferredGrammar (TransitiveInferredGrammarRec goal r (DerivedFrom grammar) (DerivedFrom grammar') inferred) grammar
-    ,   TransitiveInferredGrammarRec goal r grammar grammar' inferred
-      ~ InferredForm (TransitiveInferredGrammarRec goal r (DerivedFrom grammar) (DerivedFrom grammar') inferred) grammar
-    ) => ReconstructInferredGrammarRec goal r grammar grammar' inferred
-  where
-    reconstructInferredGrammarRec goal r grammar grammar' inferred =
-        inferFromUnderlying grammar $ reconstructInferredGrammarRec goal r (Proxy :: Proxy (DerivedFrom grammar)) (Proxy :: Proxy (DerivedFrom grammar')) inferred
 
 -- | The empty grammar, which matches nothing.
 data GEmpty
@@ -442,6 +448,7 @@ instance
 --   of @P s@. In order to match, the lists must be of the same length, and
 --   every @Check t@ in @l@ must have a @P t@ at the same place in @ps@.
 data GSymbol (ty :: [*] -> * -> *)
+
 data PSymbol (ty :: [*] -> * -> *) (ps :: [*]) where
     PSymbol :: symbol ps rest -> PSymbol symbol ps
 
@@ -456,46 +463,49 @@ instance
         PSymbol symbol parameters
     inferFromUnderlying _ = id
 
-
 -- | A conjunction, or sequence, of two grammars.
-data GProduct (left :: *) (right :: *)
+data GProduct (left :: k) (right :: l)
 
-data PProduct (left :: *) (right :: *) where
-    PProduct :: left -> right -> PProduct left right
+--{-# INLINE grammarProductLeft #-}
+grammarProductLeft :: Proxy (GProduct left right) -> Proxy left
+grammarProductLeft _ = Proxy
+
+--{-# INLINE grammarProductRight #-}
+grammarProductRight :: Proxy (GProduct left right) -> Proxy right
+grammarProductRight _ = Proxy
+
+data PProduct (count :: Nat) (left :: *) (right :: *) where
+    PProduct :: Proxy count -> left -> right -> PProduct count left right
 
 instance
-    ( DerivedGrammar left
-    , DerivedGrammar right
+    (
     ) => DerivedGrammar (GProduct left right)
   where
     type DerivedFrom (GProduct left right) = GProduct left right
 
 instance
-    ( DerivedGrammar left
-    , DerivedGrammar right
-    ) => InferredGrammar (PProduct left' right') (GProduct left right)
+    (
+    ) => InferredGrammar (PProduct count left' right') (GProduct left right)
   where
-    type InferredForm (PProduct left' right') (GProduct left right) =
-        PProduct left' right'
+    type InferredForm (PProduct count left' right') (GProduct left right) =
+        PProduct count left' right'
     inferFromUnderlying _ = id
 
 -- | A disjunction, or choice, of two grammars.
-data GSum (left :: *) (right :: *)
+data GSum (left :: k) (right :: l)
 
 data PSum (t :: Either * *) where
     PSumLeft :: leftGrammar -> PSum ('Left leftGrammar)
     PSumRight :: rightGrammar -> PSum ('Right rightGrammar)
 
 instance
-    ( DerivedGrammar left
-    , DerivedGrammar right
+    (
     ) => DerivedGrammar (GSum left right)
   where
     type DerivedFrom (GSum left right) = GSum left right
 
 instance
-    ( DerivedGrammar left
-    , DerivedGrammar right
+    (
     ) => InferredGrammar (PSum ('Left left')) (GSum left right)
   where
     type InferredForm (PSum ('Left left')) (GSum left right) =
@@ -503,8 +513,7 @@ instance
     inferFromUnderlying _ = id
 
 instance
-    ( DerivedGrammar left
-    , DerivedGrammar right
+    (
     ) => InferredGrammar (PSum ('Right right')) (GSum left right)
   where
     type InferredForm (PSum ('Right right')) (GSum left right) =
@@ -533,19 +542,19 @@ instance
 -- | Close a grammar to recursion. Think of it as pushing onto the recursion
 --   stack; this grammar will see itself as the top of the stack.
 --   See also GOpen.
-data GClose (grammar :: *)
+data GClose (grammar :: k)
 
 data PClose (grammar :: *) where
     PClose :: grammar -> PClose grammar
 
 instance
-    ( DerivedGrammar grammar
+    (
     ) => DerivedGrammar (GClose grammar)
   where
     type DerivedFrom (GClose grammar) = GClose grammar
 
 instance
-    ( DerivedGrammar grammar
+    (
     ) => InferredGrammar (PClose grammar') (GClose grammar)
   where
     type InferredForm (PClose grammar') (GClose grammar) = PClose grammar'
@@ -553,19 +562,19 @@ instance
 
 -- | Open a grammar to recursion. Think of it as popping the recursion stack;
 --   @grammar@ will see the current recursion stack without its top item.
-data GOpen (grammar :: *)
+data GOpen (grammar :: k)
 
 data POpen (inferred :: *) where
     POpen :: inferred -> POpen inferred
 
 instance
-    ( DerivedGrammar grammar
+    (
     ) => DerivedGrammar (GOpen grammar)
   where
     type DerivedFrom (GOpen grammar) = GOpen grammar
 
 instance
-    ( DerivedGrammar grammar
+    (
     ) => InferredGrammar (POpen inferred) (GOpen grammar)
   where
     type InferredForm (POpen inferred) (GOpen grammar) = POpen inferred
@@ -593,7 +602,7 @@ instance
 --   A repeated application, due to @DerivedFrom (GProduct left right)@, will
 --   expand the subgrammars.
 instance
-    ( DerivedGrammar (GAllOf grammars)
+    (
     ) => DerivedGrammar (GAllOf (grammar ': grammars))
   where
     type DerivedFrom (GAllOf (grammar ': grammars)) =
@@ -614,11 +623,11 @@ instance
     -- This equality is obvious...
     ,   InferredForm right (GAllOf grammars)
       ~ PAllOf (PAllOfGrammars (InferredForm right (GAllOf grammars)))
-    ) => InferredGrammar (PProduct left right) (GAllOf (grammar ': grammars))
+    ) => InferredGrammar (PProduct count left right) (GAllOf (grammar ': grammars))
   where
-    type InferredForm (PProduct left right) (GAllOf (grammar ': grammars)) =
+    type InferredForm (PProduct count left right) (GAllOf (grammar ': grammars)) =
         PAllOf (left ': PAllOfGrammars (InferredForm right (GAllOf grammars)))
-    inferFromUnderlying _ (PProduct left right) =
+    inferFromUnderlying _ (PProduct _ left right) =
         PAllOfCons (left)
                    (inferFromUnderlying (Proxy :: Proxy (GAllOf grammars)) right)
 
@@ -630,18 +639,14 @@ data GOneOf (grammars :: [*])
 --   the one which was actually parsed. It also carries an index so that we
 --   can compute which one of the disjuncts was in fact parsed.
 data POneOf (index :: Nat) (inferredGrammar :: *) where
-    POneOfHere :: inferredGrammar -> POneOf Z inferredGrammar
-    POneOfThere :: POneOf n inferredGrammar -> POneOf (S n) inferredGrammar
+    POneOfHere :: inferredGrammar -> POneOf 'Z inferredGrammar
+    POneOfThere :: POneOf n inferredGrammar -> POneOf ('S n) inferredGrammar
 
 type family POneOfGrammar (oneOf :: *) :: * where
     POneOfGrammar (POneOf n grammar) = grammar
 
 type family POneOfIndex (oneOf :: *) :: Nat where
     POneOfIndex (POneOf n grammar) = n
-
-data Nat where
-    Z :: Nat
-    S :: Nat -> Nat
 
 pOneOfValue :: POneOf index anything -> anything
 pOneOfValue term = case term of
@@ -655,7 +660,7 @@ instance
     type DerivedFrom (GOneOf '[]) = GEmpty
 
 instance
-    ( DerivedGrammar (GOneOf grammars)
+    (
     ) => DerivedGrammar (GOneOf (grammar ': grammars))
   where
     type DerivedFrom (GOneOf (grammar ': grammars)) =
@@ -665,15 +670,15 @@ instance
     (
     ) => InferredGrammar PEmpty (GOneOf '[])
   where
-    type InferredForm PEmpty (GOneOf '[]) = POneOf Z PEmpty
+    type InferredForm PEmpty (GOneOf '[]) = POneOf 'Z PEmpty
     inferFromUnderlying _ = pempty
 
 instance
-    ( DerivedGrammar (GOneOf grammars)
+    (
     ) => InferredGrammar (PSum ('Left here)) (GOneOf (grammar ': grammars))
   where
     type InferredForm (PSum ('Left here)) (GOneOf (grammar ': grammars)) =
-        POneOf Z here
+        POneOf 'Z here
     inferFromUnderlying _ sum = case sum of
         PSumLeft left -> POneOfHere left
 
@@ -686,7 +691,7 @@ instance
     ) => InferredGrammar (PSum ('Right there)) (GOneOf (grammar ': grammars))
   where
     type InferredForm (PSum ('Right there)) (GOneOf (grammar ': grammars)) =
-        POneOf (S (POneOfIndex (InferredForm there (GOneOf grammars))))
+        POneOf ('S (POneOfIndex (InferredForm there (GOneOf grammars))))
                (POneOfGrammar (InferredForm there (GOneOf grammars)))
     inferFromUnderlying _ sum = case sum of
         PSumRight right -> POneOfThere (inferFromUnderlying (Proxy :: Proxy (GOneOf grammars)) right)
@@ -710,31 +715,31 @@ type family PManyGrammars (pmany :: *) :: [*] where
 --   under some GClose) would be captured and the meaning of the grammar would
 --   change.
 instance
-    ( DerivedGrammar grammar
+    (
     ) => DerivedGrammar (GMany grammar)
   where
     type DerivedFrom (GMany grammar) =
         GClose (GOneOf '[GAllOf '[GOpen grammar, GRecurse], GTrivial])
 
 instance
-    ( DerivedGrammar grammar
-    ) => InferredGrammar (PClose (POneOf (S Z) PTrivial)) (GMany grammar)
+    (
+    ) => InferredGrammar (PClose (POneOf ('S 'Z) PTrivial)) (GMany grammar)
   where
-    type InferredForm (PClose (POneOf (S Z) PTrivial)) (GMany grammar) = PMany '[]
+    type InferredForm (PClose (POneOf ('S 'Z) PTrivial)) (GMany grammar) = PMany '[]
     inferFromUnderlying _ term = case term of
         PClose (POneOfThere (POneOfHere PTrivial)) -> PManyNil
 
 instance
-    ( DerivedGrammar grammar'
+    ( InferredForm recurse (GMany grammar') ~ PMany (PManyGrammars (InferredForm recurse (GMany grammar')))
     -- This is obvious: PMany (PManyGrammars x) = x always
-    , recurse ~ PMany (PManyGrammars recurse)
-    ) => InferredGrammar (PClose (POneOf Z (PAllOf '[POpen grammar, PRecurse recurse]))) (GMany grammar')
+    , InferredGrammar recurse (GMany grammar')
+    ) => InferredGrammar (PClose (POneOf 'Z (PAllOf '[POpen grammar, PRecurse recurse]))) (GMany grammar')
   where
-    type InferredForm (PClose (POneOf Z (PAllOf '[POpen grammar, PRecurse recurse]))) (GMany grammar') =
-        PMany (grammar ': PManyGrammars recurse)
-    inferFromUnderlying proxy term = case term of
+    type InferredForm (PClose (POneOf 'Z (PAllOf '[POpen grammar, PRecurse recurse]))) (GMany grammar') =
+        PMany (grammar ': PManyGrammars (InferredForm recurse (GMany grammar')))
+    inferFromUnderlying gmany term = case term of
         PClose (POneOfHere (PAllOfCons (POpen here) (PAllOfCons (PRecurse recurse) PAllOfNil))) ->
-            PManyCons here recurse
+            PManyCons here (inferFromUnderlying gmany recurse)
 
 -- | At least 1 occurrence of a grammar in sequence.
 data GMany1 (grammar :: *)
@@ -745,19 +750,19 @@ data PMany1 (inferred :: *) (inferreds :: [*]) where
     PMany1 :: inferred -> PMany inferreds -> PMany1 inferred inferreds
 
 instance
-    ( DerivedGrammar grammar
+    (
     ) => DerivedGrammar (GMany1 grammar)
   where
     type DerivedFrom (GMany1 grammar) = GProduct grammar (GMany grammar)
 
 instance
-    ( DerivedGrammar grammar
-    ) => InferredGrammar (PProduct inferred (PMany inferreds)) (GMany1 grammar)
+    (
+    ) => InferredGrammar (PProduct count inferred (PMany inferreds)) (GMany1 grammar)
   where
-    type InferredForm (PProduct inferred (PMany inferreds)) (GMany1 grammar) =
+    type InferredForm (PProduct count inferred (PMany inferreds)) (GMany1 grammar) =
         PMany1 inferred inferreds
     inferFromUnderlying _ term = case term of
-        PProduct inferred pmany -> PMany1 inferred pmany
+        PProduct _ inferred pmany -> PMany1 inferred pmany
 
 -- | Separate a grammar by another grammar.
 data GSepBy (grammar :: *) (grammarSep :: *)
@@ -777,16 +782,14 @@ type family PSepBySeparators (psepby :: *) :: [*] where
     PSepBySeparators (PSepBy grammars grammarSeps) = grammarSeps
 
 instance
-    ( DerivedGrammar grammar
-    , DerivedGrammar grammarSep
+    (
     ) => DerivedGrammar (GSepBy grammar grammarSep)
   where
     type DerivedFrom (GSepBy grammar grammarSep) =
         GAllOf '[grammar, GMany (GAllOf '[grammarSep, grammar])]
 
 instance
-    ( DerivedGrammar grammar
-    , DerivedGrammar grammarSep
+    (
     ) => InferredGrammar (PAllOf '[inferred, PMany '[]]) (GSepBy grammar grammarSep)
   where
     type InferredForm (PAllOf '[inferred, PMany '[]]) (GSepBy grammar grammarSep) =
@@ -795,9 +798,7 @@ instance
         PAllOfCons inferred _ -> PSepByOne inferred
 
 instance
-    ( DerivedGrammar grammar
-    , DerivedGrammar grammarSep
-    , InferredGrammar (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)
+    ( InferredGrammar (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)
     -- This is a clear fact about PSepBy and its relation to PSepByGrammars,
     -- PSepBySeparators
     ,   PSepBy (PSepByGrammars (InferredForm (PAllOf '[inferred', PMany rest]) (GSepBy grammar grammarSep)))
@@ -827,24 +828,24 @@ data POptional (maybeGrammar :: Maybe *) where
     POptionalNothing :: POptional 'Nothing
 
 instance
-    ( DerivedGrammar grammar
+    (
     ) => DerivedGrammar (GOptional grammar)
   where
     type DerivedFrom (GOptional grammar) = GOneOf '[grammar, GTrivial]
 
 instance
-    ( DerivedGrammar grammar
-    ) => InferredGrammar (POneOf Z inferred) (GOptional grammar)
+    (
+    ) => InferredGrammar (POneOf 'Z inferred) (GOptional grammar)
   where
-    type InferredForm (POneOf Z inferred) (GOptional grammar) = POptional ('Just inferred)
+    type InferredForm (POneOf 'Z inferred) (GOptional grammar) = POptional ('Just inferred)
     inferFromUnderlying _ term = case term of
         POneOfHere inferred -> POptionalJust inferred
 
 instance
-    ( DerivedGrammar grammar
-    ) => InferredGrammar (POneOf (S Z) PTrivial) (GOptional grammar)
+    (
+    ) => InferredGrammar (POneOf ('S 'Z) PTrivial) (GOptional grammar)
   where
-    type InferredForm (POneOf (S Z) PTrivial) (GOptional grammar) = POptional 'Nothing
+    type InferredForm (POneOf ('S 'Z) PTrivial) (GOptional grammar) = POptional 'Nothing
     inferFromUnderlying _ _ = POptionalNothing
 
 -- | Indicate the end of a sequence of symbols.
@@ -856,32 +857,68 @@ deriving instance Show GEnd
 -- | Used to indicate that we're looking to match a grammar.
 --   Compare at @GrammarParse@ and @GrammarNoParse@, which indicate that we have
 --   attempted to match a grammar, and succeeded or failed, respectively.
-data GrammarMatch t = GrammarMatch {
-      getGrammarMatch :: t
-    }
-deriving instance Show t => Show (GrammarMatch t)
+data GrammarMatch t where
+    GrammarMatch :: GrammarMatchC term => term -> GrammarMatch term
 
--- | Indicates a parse of @gammar@, with @remainder@ the unparsed tail,
---   relative to @recursion@.
-data GrammarParse grammar remainder where
+class GrammarMatchC (term :: *) where
+    type GrammarMatchT term :: *
+    grammarMatchSplit :: term -> GrammarMatchT term
+
+instance {-# OVERLAPS #-} GrammarSymbol sym => GrammarMatchC (sym t) where
+    type GrammarMatchT (sym t) = t
+    grammarMatchSplit = splitGrammarSymbol
+
+instance {-# OVERLAPS #-} GrammarMatchC GEnd where
+    type GrammarMatchT GEnd = GEnd
+    grammarMatchSplit = id
+
+-- | @inferred@ was parsed from @input@ using @count@ symbols, leaving
+--   @remainder@ symbols unparsed.
+data GrammarParse (inferred :: *) (count :: Nat) (input :: *) (remainder :: *) where
     GrammarParse
-        :: grammar
+        :: inferred
+        -> Proxy count
+        -> input
         -> remainder
-        -> GrammarParse grammar remainder
+        -> GrammarParse inferred count input remainder
+
+{-# INLINE grammarParseRemainder #-}
+grammarParseRemainder :: GrammarParse inferred count input remainder -> remainder
+grammarParseRemainder (GrammarParse _ _ _ remainder) = remainder
+
+{-# INLINE grammarParseInferred #-}
+grammarParseInferred :: GrammarParse inferred count input remainder -> inferred
+grammarParseInferred (GrammarParse inferred _ _ _) = inferred
 
 -- | Indicates no parse.
 data GrammarNoParse = GrammarNoParse
 
--- | This type family will parse a sequence of symbols to a grammar.
---   - @recursion@ is the reference for recursive grammars.
+type family GrammarSymbolMatches (sym :: *) (grammar :: *) :: Bool where
+    GrammarSymbolMatches (GrammarMatch (ty ps rest)) (GSymbol ty) = 'True
+    GrammarSymbolMatches (GrammarMatch ty) (GSymbol ty') = 'False
+
+{-# NOINLINE grammarSymbolMatches #-}
+grammarSymbolMatches :: sym -> Proxy grammar -> Proxy (GrammarSymbolMatches sym grammar)
+grammarSymbolMatches _ _ = Proxy
+
+-- | This type family will parse a sequence of symbols against a grammar.
+--
+--   The output is either @GrammarNoParse@, or @GrammarParse inferred rest@,
+--   where @inferred@ is a singleton type which, for products and sums, carries
+--   extra information indicating, respectively, the number of symbols taken
+--   by the first grammar, and the variant which was parsed.
+--
+--   Parameters are
+--   - @recursion@ is the "call stack", needed for recursive grammars.
 --   - @ty@ is the type to parse, analagous to a string under a string parser.
 --   - @grammar@ is the grammar to parse against, analagous to the target type
 --     of a string parser.
+--
 type family ParseGrammarK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
 
     -- GTrivial matches anything.
     ParseGrammarK recursion (GrammarMatch anything) (GTrivial) =
-        GrammarParse PTrivial anything
+        GrammarParse PTrivial Z anything anything
 
     -- GEmpty matches nothing.
     ParseGrammarK recursion (GrammarMatch anything) (GEmpty) =
@@ -895,18 +932,19 @@ type family ParseGrammarK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
         ParseGrammarSymbolK (recursion)
                             (GrammarMatch ty)
                             (GSymbol ty')
+                            (GrammarSymbolMatches (GrammarMatch ty) (GSymbol ty'))
 
     -- GRecurse
-    ParseGrammarK recursion anything (GRecurse) =
-        ParseGrammarRecurseK recursion anything (GRecurse)
+    ParseGrammarK recursion (GrammarMatch anything) (GRecurse) =
+        ParseGrammarRecurseK recursion (GrammarMatch anything) (GRecurse)
 
     -- GClose
-    ParseGrammarK recursion anything (GClose grammar) =
-        ParseGrammarCloseK recursion anything (GClose grammar) 
+    ParseGrammarK recursion (GrammarMatch anything) (GClose grammar) =
+        ParseGrammarCloseK recursion (GrammarMatch anything) (GClose grammar) 
 
     -- GOpen
-    ParseGrammarK recursion anything (GOpen grammar) =
-        ParseGrammarOpenK recursion anything (GOpen grammar)
+    ParseGrammarK recursion (GrammarMatch anything) (GOpen grammar) =
+        ParseGrammarOpenK recursion (GrammarMatch anything) (GOpen grammar)
 
     -- GProduct
     ParseGrammarK recursion (GrammarMatch ty) (GProduct left right) =
@@ -922,100 +960,13 @@ type family ParseGrammarK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
                          (GSum left right)
                          (GrammarMatch ty)
 
--- | Companion class to ParseGrammarK. Its instances exactly mirror the
---   clauses of that family.
-class ParseGrammar (recursion :: [*]) (ty :: *) (grammar :: *) where
-    parseGrammar
-        :: Proxy recursion
-        -> ty
-        -> Proxy grammar
-        -> ParseGrammarK recursion ty grammar
+type family ParseGrammarSymbolK (recursion :: [*]) (ty :: *) (grammar :: *) (matches :: Bool) :: * where
 
-instance
-    (
-    ) => ParseGrammar recursion (GrammarMatch anything) GTrivial
-  where
-    parseGrammar _ (GrammarMatch anything) _ = GrammarParse PTrivial anything
+    ParseGrammarSymbolK recursion (GrammarMatch (ty ps rest)) (GSymbol ty) 'True =
+        GrammarParse (PSymbol ty ps) (S Z) (ty ps rest) rest
 
-instance
-    (
-    ) => ParseGrammar recursion (GrammarMatch anything) GEmpty
-  where
-    parseGrammar _ _ _ = GrammarNoParse
-
-instance
-    ( ParseGrammarSymbol (recursion)
-                         (GrammarMatch ty)
-                         (GSymbol ty')
-    ) => ParseGrammar recursion (GrammarMatch ty) (GSymbol ty')
-  where
-    parseGrammar recursion ty grammar =
-        parseGrammarSymbol recursion ty grammar
-
-instance
-    ( ParseGrammarRecurse recursion anything (GRecurse)
-    ) => ParseGrammar recursion anything (GRecurse)
-  where
-    parseGrammar = parseGrammarRecurse
-
-instance
-    ( ParseGrammarClose recursion anything (GClose grammar)
-    ) => ParseGrammar recursion anything (GClose grammar)
-  where
-    parseGrammar = parseGrammarClose
-
-instance
-    ( ParseGrammarOpen recursion anything (GOpen grammar)
-    ) => ParseGrammar recursion anything (GOpen grammar)
-  where
-    parseGrammar = parseGrammarOpen
-
-instance
-    ( ParseGrammarProduct recursion anything (GProduct left right) ()
-    ,   ParseGrammarK recursion anything (GProduct left right)
-      ~ ParseGrammarProductK recursion anything (GProduct left right) ()
-    ) => ParseGrammar recursion anything (GProduct left right)
-  where
-    parseGrammar recursion anything gproduct =
-        parseGrammarProduct recursion anything gproduct ()
-
-instance
-    ( ParseGrammarSum recursion anything (GSum left right) anything
-    ,   ParseGrammarK recursion anything (GSum left right)
-      ~ ParseGrammarSumK recursion anything (GSum left right) anything
-    ) => ParseGrammar recursion anything (GSum left right)
-  where
-    parseGrammar recursion anything sproduct =
-        parseGrammarSum recursion anything sproduct anything
-
-type family ParseGrammarSymbolK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
-
-    ParseGrammarSymbolK recursion (GrammarMatch (ty ps rest)) (GSymbol ty) =
-        GrammarParse (PSymbol ty ps) rest
-
-    ParseGrammarSymbolK recursion (GrammarMatch ty) (GSymbol (ty' :: [*] -> * -> *)) =
+    ParseGrammarSymbolK recursion (GrammarMatch ty) (GSymbol (ty' :: [*] -> * -> *)) 'False =
         GrammarNoParse
-
--- | Companion class to ParseGrammarSymbolK.
-class ParseGrammarSymbol (recursion :: [*]) (ty :: *) (grammar :: *) where
-    parseGrammarSymbol
-        :: Proxy recursion
-        -> ty
-        -> Proxy grammar
-        -> ParseGrammarSymbolK recursion ty grammar
-
-instance {-# OVERLAPS #-}
-    ( GrammarSymbol (ty ps)
-    ) => ParseGrammarSymbol recursion (GrammarMatch (ty ps rest)) (GSymbol ty)
-  where
-    parseGrammarSymbol _ (GrammarMatch ty) _ = GrammarParse (PSymbol ty) (splitGrammarSymbol ty)
-
-instance {-# OVERLAPS #-}
-    (   ParseGrammarSymbolK recursion (GrammarMatch ty) (GSymbol ty')
-      ~ GrammarNoParse
-    ) => ParseGrammarSymbol recursion (GrammarMatch ty) (GSymbol ty')
-  where
-    parseGrammarSymbol _ _ _ = GrammarNoParse
 
 -- | Observe how we treat the parameter to GRecurse.
 --   When we parse the input using the recursion reference, we may get a parse,
@@ -1029,8 +980,8 @@ instance {-# OVERLAPS #-}
 --   
 type family ParseGrammarRecurseK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
 
-    ParseGrammarRecurseK recursion (GrammarParse recursive rest) GRecurse =
-        GrammarParse (PRecurse recursive) rest
+    ParseGrammarRecurseK recursion (GrammarParse recursive count input rest) GRecurse =
+        GrammarParse (PRecurse recursive) count input rest
 
     ParseGrammarRecurseK recursion GrammarNoParse GRecurse = GrammarNoParse
 
@@ -1039,45 +990,23 @@ type family ParseGrammarRecurseK (recursion :: [*]) (ty :: *) (grammar :: *) :: 
                              (ParseGrammarK (top ': rest) (GrammarMatch ty) top)
                              (GRecurse)
 
--- | Companion class to ParseGrammarRecurseK.
-class ParseGrammarRecurse (recursion :: [*]) (ty :: *) (grammar :: *) where
-    parseGrammarRecurse
-        :: Proxy recursion
-        -> ty
-        -> Proxy grammar
-        -> ParseGrammarRecurseK recursion ty grammar
+type family ParseGrammarOpenK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
 
-instance
-    (
-    ) => ParseGrammarRecurse recursion (GrammarParse recursive rest) GRecurse
-  where
-    parseGrammarRecurse _ (GrammarParse this rest) _ = GrammarParse (PRecurse this) rest
+    ParseGrammarOpenK recursion (GrammarParse opened count input rest) (GOpen grammar) =
+        GrammarParse (POpen opened) count input rest
 
-instance
-    (
-    ) => ParseGrammarRecurse recursion GrammarNoParse GRecurse
-  where
-    parseGrammarRecurse _ grammarNoParse _ = grammarNoParse
+    ParseGrammarOpenK recursion GrammarNoParse (GOpen grammar) =
+        GrammarNoParse
 
-instance
-    ( ParseGrammarRecurse (top ': rest)
-                          (ParseGrammarK (top ': rest) (GrammarMatch ty) top)
-                          (GRecurse)
-    , ParseGrammar (top ': rest) (GrammarMatch ty) top
-    ) => ParseGrammarRecurse (top ': rest) (GrammarMatch ty) (GRecurse)
-  where
-    parseGrammarRecurse recursion (GrammarMatch ty) grecurse =
-        parseGrammarRecurse (recursion)
-                            (parseGrammar recursion (GrammarMatch ty) top)
-                            (grecurse)
-      where
-        top :: Proxy top
-        top = Proxy
+    ParseGrammarOpenK (top ': bottom) (GrammarMatch ty) (GOpen grammar) =
+        ParseGrammarOpenK (top ': bottom)
+                          (ParseGrammarK (bottom) (GrammarMatch ty) grammar)
+                          (GOpen grammar)
 
 type family ParseGrammarCloseK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
 
-    ParseGrammarCloseK recursion (GrammarParse closed rest) (GClose grammar) =
-        GrammarParse (PClose closed) rest
+    ParseGrammarCloseK recursion (GrammarParse closed count input rest) (GClose grammar) =
+        GrammarParse (PClose closed) count input rest
 
     ParseGrammarCloseK recursion GrammarNoParse (GClose grammar) =
         GrammarNoParse
@@ -1089,94 +1018,6 @@ type family ParseGrammarCloseK (recursion :: [*]) (ty :: *) (grammar :: *) :: * 
         ParseGrammarCloseK (recursion)
                            (ParseGrammarK (GClose grammar ': recursion) (GrammarMatch ty) grammar)
                            (GClose grammar)
-
--- | Companion class to ParseGrammarCloseK.
-class ParseGrammarClose (recursion :: [*]) (ty :: *) (grammar :: *) where
-    parseGrammarClose
-        :: Proxy recursion
-        -> ty
-        -> Proxy grammar
-        -> ParseGrammarCloseK recursion ty grammar
-
-instance
-    (
-    ) => ParseGrammarClose recursion (GrammarParse close rest) (GClose grammar)
-  where
-    parseGrammarClose _ (GrammarParse this rest) _ = GrammarParse (PClose this) rest
-
-instance
-    (
-    ) => ParseGrammarClose recursion GrammarNoParse (GClose grammar)
-  where
-    parseGrammarClose _ grammarNoParse _ = grammarNoParse
-
-instance
-    ( ParseGrammarClose (recursion)
-                        (ParseGrammarK (GClose grammar ': recursion) (GrammarMatch ty) grammar)
-                        (GClose grammar)
-    , ParseGrammar (GClose grammar ': recursion) (GrammarMatch ty) grammar
-    ) => ParseGrammarClose recursion (GrammarMatch ty) (GClose grammar)
-  where
-    parseGrammarClose recursion (GrammarMatch ty) gclose =
-        parseGrammarClose (recursion)
-                          (parseGrammar newStack (GrammarMatch ty) grammar)
-                          (gclose)
-      where
-        grammar :: Proxy grammar
-        grammar = Proxy
-        newStack :: Proxy (GClose grammar ': recursion)
-        newStack = Proxy
-
-type family ParseGrammarOpenK (recursion :: [*]) (ty :: *) (grammar :: *) :: * where
-
-    ParseGrammarOpenK recursion (GrammarParse opened rest) (GOpen grammar) =
-        GrammarParse (POpen opened) rest
-
-    ParseGrammarOpenK recursion GrammarNoParse (GOpen grammar) =
-        GrammarNoParse
-
-    ParseGrammarOpenK (top ': bottom) (GrammarMatch ty) (GOpen grammar) =
-        ParseGrammarOpenK (top ': bottom)
-                          (ParseGrammarK (bottom) (GrammarMatch ty) grammar)
-                          (GOpen grammar)
-
--- | Companion class to ParseGrammarOpenK.
-class ParseGrammarOpen (recursion :: [*]) (ty :: *) (grammar :: *) where
-    parseGrammarOpen
-        :: Proxy recursion
-        -> ty
-        -> Proxy grammar
-        -> ParseGrammarOpenK recursion ty grammar
-
-instance
-    (
-    ) => ParseGrammarOpen recursion (GrammarParse open rest) (GOpen grammar)
-  where
-    parseGrammarOpen _ (GrammarParse this rest) _ = GrammarParse (POpen this) rest
-
-instance
-    (
-    ) => ParseGrammarOpen recursion GrammarNoParse (GOpen grammar)
-  where
-    parseGrammarOpen _ grammarNoParse _ = grammarNoParse
-
-instance
-    ( ParseGrammarOpen (top ': bottom)
-                       (ParseGrammarK (bottom) (GrammarMatch ty) grammar)
-                       (GOpen grammar)
-    , ParseGrammar (bottom) (GrammarMatch ty) grammar
-    ) => ParseGrammarOpen (top ': bottom) (GrammarMatch ty) (GOpen grammar)
-  where
-    parseGrammarOpen recursion (GrammarMatch ty) gclose =
-        parseGrammarOpen (recursion)
-                         (parseGrammar newStack (GrammarMatch ty) grammar)
-                         (gclose)
-      where
-        grammar :: Proxy grammar
-        grammar = Proxy
-        newStack :: Proxy bottom
-        newStack = Proxy
-
 
 -- Parsing a product proceeds by trying the left, using its output to try the
 -- right, and if either fails, giving GrammarNoParse.
@@ -1196,21 +1037,28 @@ type family ParseGrammarProductK (recursion :: [*]) (ty :: *) (grammar :: *) (le
     --
     -- NB left' not necessarily left, as parsing can change the type by
     -- inferring parameters.
-    ParseGrammarProductK recursion (GrammarParse left' rest) (ParseGrammarProductLeft left right) () =
+    ParseGrammarProductK recursion (GrammarParse left' count input rest) (ParseGrammarProductLeft left right) () =
         ParseGrammarProductK (recursion)
                              (ParseGrammarK recursion (GrammarMatch rest) right)
                              (ParseGrammarProductRight left right)
-                             (GrammarParse left' rest)
+                             (GrammarParse left' count input rest)
 
-    ParseGrammarProductK recursion (GrammarParse right' rest) (ParseGrammarProductRight left right) (GrammarParse left' rest') =
-        GrammarParse (PProduct left' right') rest
+    ParseGrammarProductK recursion (GrammarParse right' count input rest) (ParseGrammarProductRight left right) (GrammarParse left' count' input' rest') =
+        -- Be skeptical of the choice of parameters.
+        -- We sum the counts, because that's the total number of symbols
+        -- consumed, but we choose count' for the PProduct output, because
+        -- that must be the number of symbols consumed by the *left* grammar.
+        -- input' is chosen as the input, because that's the *original* input
+        -- for the *whole* product, and rest is chosen because it's the
+        -- remainder for the *whole* product parse.
+        GrammarParse (PProduct count' left' right') (NatSum count count') input' rest
 
     -- Here we know it's a recursive call from the final clause of this family.
     -- It means the left failed to parse, so the whole thing fails.
     ParseGrammarProductK recursion (GrammarNoParse) (ParseGrammarProductLeft left right) () =
         GrammarNoParse
 
-    ParseGrammarProductK recursion (GrammarNoParse) (ParseGrammarProductRight left right) (GrammarParse left' rest') =
+    ParseGrammarProductK recursion (GrammarNoParse) (ParseGrammarProductRight left right) (GrammarParse left' count input rest) =
         GrammarNoParse
 
     -- Try parsing to left, and pass its output back to this family.
@@ -1223,63 +1071,17 @@ type family ParseGrammarProductK (recursion :: [*]) (ty :: *) (grammar :: *) (le
 data ParseGrammarProductLeft left right
 data ParseGrammarProductRight left right
 
--- | Companion class to ParseGrammarProductK.
-class ParseGrammarProduct (recursion :: [*]) (ty :: *) (grammar :: *) (leftParse :: *) where
-    parseGrammarProduct
-        :: Proxy recursion
-        -> ty
-        -> Proxy grammar
-        -> leftParse
-        -> ParseGrammarProductK recursion ty grammar leftParse
+{-# NOINLINE parseGrammarProductLeft #-}
+parseGrammarProductLeft :: Proxy (GProduct left right) -> Proxy (ParseGrammarProductLeft left right)
+parseGrammarProductLeft _ = Proxy
 
-instance
-    ( ParseGrammarProduct (recursion)
-                          (ParseGrammarK recursion (GrammarMatch rest) right)
-                          (ParseGrammarProductRight left right)
-                          (GrammarParse left' rest)
-    , ParseGrammar recursion (GrammarMatch rest) right
-    ) => ParseGrammarProduct recursion (GrammarParse left' rest) (ParseGrammarProductLeft left right) ()
-  where
-    parseGrammarProduct recursion (GrammarParse this rest) _ () =
-        parseGrammarProduct (recursion)
-                            (parseGrammar recursion (GrammarMatch rest) (Proxy :: Proxy right))
-                            (Proxy :: Proxy (ParseGrammarProductRight left right))
-                            (GrammarParse this rest)
+{-# NOINLINE parseGrammarProductRight #-}
+parseGrammarProductRight :: Proxy (ParseGrammarProductLeft left right) -> Proxy (ParseGrammarProductRight left right)
+parseGrammarProductRight _ = Proxy
 
--- This is the instance which demands that fourth parameter. Observe how we
--- use it to create the product grammar.
-instance
-    (
-    ) => ParseGrammarProduct recursion (GrammarParse right' rest) (ParseGrammarProductRight left right) (GrammarParse left' rest')
-  where
-    parseGrammarProduct _ (GrammarParse right rest) _ (GrammarParse left rest') =
-        GrammarParse (PProduct left right) rest
-
-instance
-    (
-    ) => ParseGrammarProduct recursion GrammarNoParse (ParseGrammarProductLeft left right) ()
-  where
-    parseGrammarProduct _ grammarNoParse _ _ = grammarNoParse
-
-instance
-    (
-    ) => ParseGrammarProduct recursion GrammarNoParse (ParseGrammarProductRight left right) (GrammarParse left' rest')
-  where
-    parseGrammarProduct _ grammarNoParse _ _ = grammarNoParse
-
-instance
-    ( ParseGrammarProduct (recursion)
-                          (ParseGrammarK recursion (GrammarMatch ty) left)
-                          (ParseGrammarProductLeft left right)
-                          ()
-    , ParseGrammar recursion (GrammarMatch ty) left
-    ) => ParseGrammarProduct recursion (GrammarMatch ty) (GProduct left right) ()
-  where
-    parseGrammarProduct recursion (GrammarMatch ty) gproduct () =
-        parseGrammarProduct (recursion)
-                            (parseGrammar recursion (GrammarMatch ty) (Proxy :: Proxy left))
-                            (Proxy :: Proxy (ParseGrammarProductLeft left right))
-                            ()
+{-# NOINLINE parseGrammarProductRightGrammar #-}
+parseGrammarProductRightGrammar :: Proxy (ParseGrammarProductLeft left right) -> Proxy right
+parseGrammarProductRightGrammar _ = Proxy
 
 -- Like for ParseGrammarProductK, we use special types to signal the parsing
 -- process. Here, we also have a fourth parameter, for the benefit of the
@@ -1289,12 +1091,12 @@ instance
 type family ParseGrammarSumK (recursion :: [*]) (ty :: *) (grammar :: *) (initial :: *) :: * where
 
     -- The left parsed; we're done.
-    ParseGrammarSumK recursion (GrammarParse left' rest) (ParseGrammarSumLeft left right) initial =
-        GrammarParse (PSum ('Left left')) rest
+    ParseGrammarSumK recursion (GrammarParse left' count input rest) (ParseGrammarSumLeft left right) initial =
+        GrammarParse (PSum ('Left left')) count input rest
 
     -- The right parsed; we're done.
-    ParseGrammarSumK recursion (GrammarParse right' rest) (ParseGrammarSumRight left right) initial =
-        GrammarParse (PSum ('Right right')) rest
+    ParseGrammarSumK recursion (GrammarParse right' count input rest) (ParseGrammarSumRight left right) initial =
+        GrammarParse (PSum ('Right right')) count input rest
 
     -- The left failed to parse; try the right.
     ParseGrammarSumK recursion (GrammarNoParse) (ParseGrammarSumLeft left right) initial =
@@ -1316,62 +1118,180 @@ type family ParseGrammarSumK (recursion :: [*]) (ty :: *) (grammar :: *) (initia
 data ParseGrammarSumLeft (left :: *) (right :: *)
 data ParseGrammarSumRight (left :: *) (right :: *)
 
--- | Companion class to ParseGrammarSumK.
-class ParseGrammarSum (recursion :: [*]) (ty :: *) (grammar :: *) (initial :: *) where
-    parseGrammarSum
-        :: Proxy recursion
-        -> ty
-        -> Proxy grammar
-        -> initial
-        -> ParseGrammarSumK recursion ty grammar initial
+-- ULTIMATELY what we want is some function
+--
+--   parseGrammar
+--       :: Proxy recursion
+--       -> ty
+--       -> Proxy grammar
+--       -> ParseGrammarK recursion ty grammar
+--
+-- and we wish to compute ParseGrammarK only once.
+--
+-- With the type in hand, we should be able to get away with only traversing
+-- it, rather than recomputing it for product/sum cases. We just need to grab
+-- the associated symbol data constructors. If we have in hand the input symbol
+-- sequence, as well as the grammar type, we can analyze both of them jointly.
+--
+-- How will we proceed with products? Evidently, the class ParseGrammarR
+-- must produce the remainder so it can feed to the next one.
+
+-- | NB we aim to compute ParseGrammarK as few times as possible, i.e. at most
+--   once. That's why we state the variable @parsed@ and give an equality.
+--   GHC may complain that it's redundant, but it's not!!
+parseGrammarV
+    :: forall term grammar parsed .
+       ( ParseGrammarR term parsed
+       , parsed ~ ParseGrammarK '[grammar] (GrammarMatch term) grammar
+       )
+    => term
+    -> Proxy grammar
+    -> parsed
+parseGrammarV term proxyGrammar = parseGrammarR term (Proxy :: Proxy parsed)
+
+-- TODO almost there! We just have to factor the reconstruction through the
+-- GrammarParse/GrammarNoParse kind-of-functor-like-notion.
+-- How best to do this, though? New type families and classes which wrap/unwrap
+-- is the only thing that comes to mind...
+
+data GrammarInferred
+
+type family GrammarDerivationTreeThruParse (recursionStack :: [*]) (derivedGrammar :: *) (parsed :: *) where
+    GrammarDerivationTreeThruParse recursionStack derivedGrammar GrammarNoParse = GrammarNoParse
+    GrammarDerivationTreeThruParse recursionStack derivedGrammar (GrammarParse inferred count ty rest) =
+        GrammarParse (Proxy (GrammarDerivationTree recursionStack derivedGrammar inferred)) count ty rest
+
+type family GrammarDerivationTreeInferredFormThruParse (derivationTreeThruParse :: *) :: * where
+    GrammarDerivationTreeInferredFormThruParse GrammarNoParse = GrammarNoParse
+    GrammarDerivationTreeInferredFormThruParse (GrammarParse (Proxy derivationTree) count ty rest) =
+        GrammarParse (GrammarDerivationTreeInferredForm derivationTree) count ty rest
+
+type family GrammarDerivationTreeThruParseRetract (derivationTreeThruParse :: *) :: [(*, *)] where
+    GrammarDerivationTreeThruParseRetract (GrammarParse (Proxy derivationTree) count ty rest) = derivationTree
+
+class ReconstructGrammarThruParseK derivationTree parsed reconstructed where
+    reconstructGrammarThruParseK
+        :: Proxy derivationTree
+        -> parsed
+        -> reconstructed
 
 instance
     (
-    ) => ParseGrammarSum recursion (GrammarParse left' rest) (ParseGrammarSumLeft left right) initial
+    ) => ReconstructGrammarThruParseK derivationTree GrammarNoParse GrammarNoParse
   where
-    parseGrammarSum _ (GrammarParse this rest) _ _ =
-        GrammarParse (PSumLeft this) rest
+    reconstructGrammarThruParseK _ = id
+
+instance
+    ( ReconstructGrammarK derivationTree parsed inferred
+    ) => ReconstructGrammarThruParseK derivationTree (GrammarParse parsed count ty rest) (GrammarParse inferred count ty rest)
+  where
+    reconstructGrammarThruParseK derivationTree (GrammarParse parsed count ty rest) =
+        GrammarParse (reconstructGrammarK derivationTree parsed) count ty rest
+
+parseDerivedGrammar
+    :: forall derivedGrammar term grammar deconstructed reconstructed parsed derivationTree derivationTreeThruParse .
+       ( deconstructed ~ DeconstructGrammar derivedGrammar
+       , parsed ~ ParseGrammarK '[deconstructed] (GrammarMatch term) deconstructed
+       , ParseGrammarR term parsed
+       , derivationTreeThruParse ~ GrammarDerivationTreeThruParse '[derivedGrammar] derivedGrammar parsed
+       --, reconstructed ~ GrammarDerivationTreeInferredFormThruParse derivationTreeThruParse
+       --, derivationTree ~ GrammarDerivationTreeThruParseRetract derivationTreeThruParse
+       --, ReconstructGrammarThruParseK derivationTree parsed reconstructed
+       )
+    => term
+    -> Proxy derivedGrammar
+    -> reconstructed
+parseDerivedGrammar = undefined
+{-
+parseDerivedGrammar term proxyDerivedGrammar =
+    let parsed = parseGrammarR term (Proxy :: Proxy parsed)
+        derivationTree :: Proxy derivationTree
+        derivationTree = Proxy
+    in  reconstructGrammarThruParseK derivationTree parsed
+-}
+
+-- | This class discriminates between parse and no parse.
+class ParseGrammarR (ty :: *) (parsed :: *) where
+    parseGrammarR :: ty -> Proxy parsed -> parsed
+
+instance ParseGrammarR ty GrammarNoParse where
+    parseGrammarR _ _ = GrammarNoParse
+
+instance
+    ( ParseGrammarQ ty inferred rest
+    ) => ParseGrammarR ty (GrammarParse inferred count ty rest)
+  where
+    parseGrammarR ty _ = GrammarParse inferred Proxy ty rest
+      where
+        (inferred, rest) = parseGrammarQ ty (Proxy :: Proxy inferred) (Proxy :: Proxy rest)
+
+class ParseGrammarQ (ty :: *) (inferred :: *) (rest :: *) where
+    parseGrammarQ :: ty -> Proxy inferred -> Proxy rest -> (inferred, rest)
 
 instance
     (
-    ) => ParseGrammarSum recursion (GrammarParse right' rest) (ParseGrammarSumRight left right) initial
+    ) => ParseGrammarQ ty PTrivial ty
   where
-    parseGrammarSum _ (GrammarParse this rest) _ _ =
-        GrammarParse (PSumRight this) rest
+    parseGrammarQ ty _ _ = (PTrivial, ty)
 
 instance
-    ( ParseGrammarSum (recursion)
-                      (ParseGrammarK recursion initial right)
-                      (ParseGrammarSumRight left right)
-                      (initial)
-    , ParseGrammar recursion initial right
-    ) => ParseGrammarSum recursion GrammarNoParse (ParseGrammarSumLeft left right) initial
+    ( GrammarSymbol (ty ps)
+    ) => ParseGrammarQ (ty ps rest) (PSymbol ty ps) rest
   where
-    parseGrammarSum recursion _ _ initial =
-       parseGrammarSum (recursion)
-                       (parseGrammar recursion initial (Proxy :: Proxy right))
-                       (Proxy :: Proxy (ParseGrammarSumRight left right))
-                       (initial)
+    parseGrammarQ sym _ _ = (PSymbol sym, splitGrammarSymbol sym)
 
 instance
-    (
-    ) => ParseGrammarSum recursion GrammarNoParse (ParseGrammarSumRight left right) initial
-  where
-    parseGrammarSum _ grammarNoParse _ _ = grammarNoParse
+    ( ParseGrammarQ ty recurse rest
+    ) => ParseGrammarQ ty (PRecurse recurse) rest
+  where 
+    parseGrammarQ ty _ proxyRest = (PRecurse recurse, rest)
+      where
+        (recurse, rest) = parseGrammarQ ty (Proxy :: Proxy recurse) proxyRest
 
 instance
-    ( ParseGrammarSum (recursion)
-                      (ParseGrammarK recursion (GrammarMatch ty) left)
-                      (ParseGrammarSumLeft left right)
-                      (GrammarMatch ty)
-    , ParseGrammar recursion (GrammarMatch ty) left
-    ) => ParseGrammarSum recursion (GrammarMatch ty) (GSum left right) (GrammarMatch ty)
+    ( ParseGrammarQ ty close rest
+    ) => ParseGrammarQ ty (PClose close) rest
   where
-    parseGrammarSum recursion grammarMatch gsum initial =
-        parseGrammarSum (recursion)
-                        (parseGrammar recursion grammarMatch (Proxy :: Proxy left))
-                        (Proxy :: Proxy (ParseGrammarSumLeft left right))
-                        (initial)
+    parseGrammarQ ty _ proxyRest = (PClose close, rest)
+      where
+        (close, rest) = parseGrammarQ ty (Proxy :: Proxy close) proxyRest
+
+instance
+    ( ParseGrammarQ ty open rest
+    ) => ParseGrammarQ ty (POpen open) rest
+  where
+    parseGrammarQ ty _ proxyRest = (POpen open, rest)
+      where
+        (open, rest) = parseGrammarQ ty (Proxy :: Proxy open) proxyRest
+
+instance
+    ( tail ~ DropSymbols count ty
+    , ParseGrammarQ ty left tail
+    , ParseGrammarQ tail right rest
+    ) => ParseGrammarQ ty (PProduct count left right) rest
+  where
+    parseGrammarQ ty _ proxyRest = (PProduct Proxy left right, rest)
+      where
+        (left, tail) = parseGrammarQ ty (Proxy :: Proxy left) proxyTail
+        (right, rest) = parseGrammarQ tail (Proxy :: Proxy right) proxyRest
+        proxyTail :: Proxy tail
+        proxyTail = Proxy
+
+instance
+    ( ParseGrammarQ ty left rest
+    ) => ParseGrammarQ ty (PSum ('Left left)) rest
+  where 
+    parseGrammarQ ty _ proxyRest = (PSumLeft left, rest)
+      where
+        (left, rest) = parseGrammarQ ty (Proxy :: Proxy left) proxyRest
+
+instance
+    ( ParseGrammarQ ty right rest
+    ) => ParseGrammarQ ty (PSum ('Right right)) rest
+  where 
+    parseGrammarQ ty _ proxyRest = (PSumRight right, rest)
+      where
+        (right, rest) = parseGrammarQ ty (Proxy :: Proxy right) proxyRest
 
 -- This will print a sequence of symbols without constructing a Grammar value.
 -- The @m@ parameter will be used as a spacer, between every two symbols.
