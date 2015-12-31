@@ -32,6 +32,9 @@ data Result (output :: o) (input :: i) where
     NoParse :: Result output input
     Parsed :: output -> input -> Result output input
 
+-- | Use this to mark the EOF.
+data End = End
+
 -- | Every parser must indicate the kind of its output by giving a clause for
 --   this family.
 type family ParseOutputKind ty :: Type
