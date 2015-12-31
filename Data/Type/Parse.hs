@@ -86,9 +86,10 @@ type family ParseOutputKind ty :: Type
 type family Parse (outputKind :: Type) ty (input :: inputKind) :: Result outputKind inputKind
 
 -- | The empty parser never parses. This is like @empty@ from @Alternative@.
-data Empty
-type instance ParseOutputKind Empty = Type
-type instance Parse outputKind Empty input = NoParse
+--   Its parameter is the kind of the output.
+data Empty k
+type instance ParseOutputKind (Empty k) = k
+type instance Parse outputKind (Empty k) input = NoParse
 
 -- | The trivial parser always parses, giving @t@ and consuming no input.
 --   This is like @pure@.
@@ -208,7 +209,10 @@ type family ParseRightApRight mxKind inputKind outputKind f parsedX :: Result ou
 --   @Empty@ plays the role of @empty@.
 data mf :<|> mx
 
-type instance ParseOutputKind (mf :<|> mx) = ParseOutputKind mf
+-- We take care to ensure that both sides have the same output kind.
+type instance ParseOutputKind (mf :<|> mx) = ParseOutputKindAlt (ParseOutputKind mf) (ParseOutputKind mx)
+type family ParseOutputKindAlt left right :: Type where
+    ParseOutputKindAlt k k = k
 type instance Parse outputKind (mf :<|> mx) (input :: inputKind) =
     ParseAltLeft (ParseOutputKind mx) inputKind outputKind input mx (Parse (ParseOutputKind mf) mf input)
 type family ParseAltLeft mxKind inputKind outputKind input mx parseF :: Result outputKind inputKind where
