@@ -17,7 +17,7 @@ extra-source-files:  README.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Data.Type.Grammar
+  exposed-modules:     Data.Type.Parse
   -- other-modules:       
   other-extensions:    AutoDeriveTypeable
                      , DataKinds
