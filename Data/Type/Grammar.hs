@@ -6,6 +6,11 @@ Licence     : BSD3
 Maintainer  : aovieth@gmail.com
 Stability   : experimental
 Portability : non-portable (GHC only)
+
+DEPRECATED this is here for historical reasons. Compared to Data.Type.Parse
+it's really cumbersome and also incredibly slow. BUT it's still got some
+pretty interesting stuff.
+
 -}
 
 {-# LANGUAGE AutoDeriveTypeable #-}
