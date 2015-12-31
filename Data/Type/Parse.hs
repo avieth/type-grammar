@@ -28,9 +28,26 @@ import qualified GHC.TypeLits as TypeLits (Nat, Symbol)
 
 -- | The result of a parse. It's analagous to Maybe (t, stream) from a canonical
 --   pure functional term parser.
-data Result (output :: o) (input :: i) where
-    NoParse :: Result output input
-    Parsed :: output -> input -> Result output input
+data Result (output :: o) (remainder :: i) where
+    NoParse :: Result output remainder
+    Parsed :: output -> remainder -> Result output remainder
+
+type family ResultType (result :: Result (output :: outputKind) input) :: outputKind where
+    ResultType ('Parsed output remainder) = output
+
+type family ResultRemainder (result :: Result output (input :: inputKind)) :: inputKind where
+    ResultRemainder ('Parsed output remainder) = remainder
+
+-- | Show that a given type can be used to construct a value of some other
+--   type.
+--   TODO better name. This doesn't necessarily mean we have a singleton type.
+class Singleton (t :: k) where
+    type SingletonType t :: Type
+    singleton :: Proxy t -> SingletonType t
+
+instance Singleton output => Singleton ('Parsed output remainder) where
+    type SingletonType ('Parsed output remainder) = SingletonType output
+    singleton _ = singleton (Proxy :: Proxy output)
 
 -- | Use this to mark the EOF.
 data End = End
@@ -104,6 +121,10 @@ type family ParseSymbol (input :: inputKind) :: Result TypeLits.Symbol inputKind
 data Sym (sym :: TypeLits.Symbol) (t :: Type) where
     Sym :: Proxy sym -> t -> Sym sym t
 
+instance Singleton (sym :: TypeLits.Symbol) where
+    type SingletonType (sym :: TypeLits.Symbol) = Proxy sym
+    singleton _ = Proxy
+
 -- | Match any @Nat nat@ (nat is a type-level natural number).
 data AnyNat
 
@@ -116,6 +137,10 @@ type family ParseNat (input :: inputKind) :: Result TypeLits.Nat inputKind where
 
 data Nat (nat :: TypeLits.Nat) (t :: Type) where
     Nat :: Proxy nat -> t -> Nat nat t
+
+instance Singleton (nat :: TypeLits.Nat) where
+    type SingletonType (nat :: TypeLits.Nat) = Proxy nat
+    singleton _ = Proxy
 
 -- | A functor-like construction, where @f@ is a type constructor.
 data f :<$> x
@@ -217,8 +242,21 @@ type instance ParseOutputKind (SuspendParser ty k outputKind) = outputKind
 type instance Parse outputKind (SuspendParser ty k outputKind) (input :: inputKind) = Parse outputKind (Force ty k) input
 
 data List (t :: k) where
-    Nil :: List t
+    Nil :: Proxy t -> List t
     Cons :: t -> List t -> List t
+
+instance Singleton ('Nil ('Proxy :: Proxy t)) where
+    type SingletonType ('Nil ('Proxy :: Proxy t)) = List t
+    singleton _ = Nil Proxy
+
+instance
+    ( Singleton t
+    , Singleton list
+    , SingletonType list ~ List (SingletonType t)
+    ) => Singleton ('Cons t list)
+  where
+    type SingletonType ('Cons t list) = List (SingletonType t)
+    singleton _ = Cons (singleton (Proxy :: Proxy t)) (singleton (Proxy :: Proxy list))
 
 -- | 0 or more occurrences of a parser.
 --   Could just as well say
@@ -244,11 +282,20 @@ instance Thunk (ManyThunk t) Type where
         )
         -- Must give the signature here, otherwise GHC will choose Any and
         -- it will kill our type families, which must match output kinds.
-        :<|> Trivial (Nil :: List (ParseOutputKind t))
+        :<|> Trivial (Nil 'Proxy :: List (ParseOutputKind t))
 
 -- For the Many1 parser, we shall require a nonempty list.
 data NonEmptyList (t :: k) where
     NonEmptyList :: t -> List t -> NonEmptyList t
+
+instance
+    ( Singleton t
+    , Singleton list
+    , SingletonType list ~ List (SingletonType t)
+    ) => Singleton ('NonEmptyList t list)
+  where
+    type SingletonType ('NonEmptyList t list) = NonEmptyList (SingletonType t)
+    singleton _ = NonEmptyList (singleton (Proxy :: Proxy t)) (singleton (Proxy :: Proxy list))
 
 -- | 1 or more occurrences of a paser.
 type Many1 t = (('NonEmptyList :: ParseOutputKind t -> List (ParseOutputKind t) -> NonEmptyList (ParseOutputKind t)) :<$> t) :<*> Many t
