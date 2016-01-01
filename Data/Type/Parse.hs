@@ -88,6 +88,9 @@ type family InputSplitTypeStream (ty :: Type) :: Maybe (Type -> Type, Type) wher
     InputSplitTypeStream (ty rest) = 'Just '(ty, rest)
     InputSplitTypeStream anythingElse = 'Nothing
 
+-- | Use this to mark the EOF in a sequence of Type -> Type.
+data End = End
+
 type instance InputSplit k (l :: [k]) = InputSplitList l
 type family InputSplitList (l :: [k]) :: Maybe (k, [k]) where
     InputSplitList '[] = 'Nothing
@@ -126,13 +129,26 @@ data Result output remainder where
 --   For the higher-order parsers, the kind can be inferred from the parts.
 --
 data Parser (input :: Type) (output :: Type) :: Type where
-    Pure :: Proxy inputKind -> outputKind -> Parser inputKind outputKind
+
+    -- Always parses, without consuming input.
+    Trivial :: Proxy inputKind -> Parser inputKind ()
+
+    -- NB this cannot be implemented in terms of Trivial and Negate, because
+    -- 'Negate ('Trivial 'Proxy) :: Parser inputKind () but we need that
+    -- output kind to be free, not ().
     Empty :: Proxy inputKind -> Proxy outputKind -> Parser inputKind outputKind
-    Match :: Proxy inputKind -> match -> Parser inputKind match
+
+    -- Parses without consuming input iff the argument parser parses.
+    Negate :: Parser inputKind outputKind -> Parser inputKind ()
+
+    -- Take a token from the stream.
+    Token :: Proxy inputKind -> Proxy outputKind -> Parser inputKind outputKind
+
     Fmap :: (k -> l) -> Parser inputKind k -> Parser inputKind l
     Ap :: Parser inputKind (k -> l) -> Parser inputKind k -> Parser inputKind l
     Alt :: Parser inputKind outputKind -> Parser inputKind outputKind -> Parser inputKind outputKind
     Join :: Parser inputKind (Parser inputKind outputKind) -> Parser inputKind outputKind
+
     -- Here's an asymmetry with the term parser case.
     -- Using Fmap we can lift data constructors through parsers.
     -- But what about type families? Those are weird animals, which cannot be
@@ -141,6 +157,7 @@ data Parser (input :: Type) (output :: Type) :: Type where
     -- tuples or similar). The arguments can be gathered using Fmap and Ap,
     -- then applied using this constructor.
     ApplyTyFunction :: TyFunction k l -> Parser inputKind k -> Parser inputKind l
+
     -- Recursive parsers naturally lead to infinite types. To make recursive
     -- parsers viable, we use explicit laziness. A new type, @thunk@, is
     -- used to stand in for the suspended parser. It must have the type family
@@ -149,12 +166,14 @@ data Parser (input :: Type) (output :: Type) :: Type where
 
 type family RunParser (parser :: Parser inputKind outputKind) (input :: inputKind) :: Result outputKind inputKind where
 
-    RunParser ('Pure 'Proxy x) input = 'Parsed x input
+    RunParser ('Trivial 'Proxy) input = 'Parsed '() input
 
-    RunParser ('Empty 'Proxy outputKind) input = 'NoParse
+    RunParser ('Empty 'Proxy 'Proxy) input = 'NoParse
 
-    RunParser ('Match 'Proxy (match :: k)) input =
-        RunParserMatch match (InputSplit k input)
+    RunParser ('Negate parser) input = RunParserNegate (RunParser parser input) input
+
+    RunParser ('Token ('Proxy :: Proxy inputKind) ('Proxy :: Proxy outputKind)) (input :: inputKind) =
+        RunParserToken (InputSplit outputKind input)
 
     RunParser ('Fmap f parser) input =
         RunParserFmap f (RunParser parser input)
@@ -173,10 +192,13 @@ type family RunParser (parser :: Parser inputKind outputKind) (input :: inputKin
     RunParser ('Suspend thunk ('Proxy :: Proxy inputKind) ('Proxy :: Proxy outputKind)) input =
         RunParser (Force thunk inputKind outputKind) input
 
-type family RunParserMatch (match :: k) (split :: Maybe (k, inputKind)) :: Result k inputKind where
-    RunParserMatch match 'Nothing = 'NoParse
-    RunParserMatch match ('Just '(match, remaining)) = 'Parsed match remaining
-    RunParserMatch match ('Just '(anythingElse, remaining)) = 'NoParse
+type family RunParserNegate (result :: Result outputKind inputKind) (input :: inputKind) :: Result () inputKind where
+    RunParserNegate 'NoParse input = 'Parsed '() input
+    RunParserNegate ('Parsed output remainder) input = 'NoParse
+
+type family RunParserToken (split :: Maybe (outputKind, inputKind)) :: Result outputKind inputKind where
+    RunParserToken 'Nothing = 'NoParse
+    RunParserToken ('Just '(token, remaining)) = 'Parsed token remaining
 
 type family RunParserFmap (f :: k -> l) (result :: Result k inputKind) :: Result l inputKind where
     RunParserFmap f 'NoParse = 'NoParse
@@ -211,6 +233,17 @@ type family RunParserApplyTyFunction (f :: TyFunction k l) (result :: Result k i
 
 type family Force (thunk :: t) inputKind outputKind :: Parser inputKind outputKind
 
+type TyConst (x :: k) = 'TyFunction (TyConstDef x) ('Proxy :: Proxy l) ('Proxy :: Proxy k)
+data TyConstDef (x :: k)
+type instance TyFunctionClause (TyConstDef (x :: k)) l k anything = x
+
+type Pure (inputKindProxy :: Proxy inputKind) (x :: outputKind) =
+    'ApplyTyFunction (TyConst x) ('Trivial inputKindProxy)
+
+type EOF (inputKindProxy :: Proxy inputKind) (outputKindProxy :: Proxy outputKind) =
+    'Negate ('Token inputKindProxy outputKindProxy)
+
+type (:<@>) = ApplyTyFunction
 type (:<$>) = Fmap
 type (:<*>) = Ap
 type (:<|>) = Alt
@@ -242,7 +275,47 @@ type x :*> y = 'ApplyTyFunction TySnd ( '(,) :<$> x :<*> y )
 --
 type x :>>= y = 'Join ('ApplyTyFunction y x)
 
-type Ex1 = 'Pure ('Proxy :: Proxy Type) 'True
+-- To match on particular types, the programmar must characterize which
+-- types will match, by giving a TyFunction with codomain Maybe k and
+-- apply this to a parser using ApplyTyFunction. Now we have something that
+-- looks like this
+--
+--     @Parser inputKind (Maybe k)@
+--
+-- By way of the TyMaybeParse function and Join, we can recover a
+-- 
+--     @Parser inputKind k@
+--
+-- which parses only when that Maybe is 'Just
+
+type Characterization k l = TyFunction k (Maybe l)
+
+type Match (characterization :: Characterization k l) (parser :: Parser inputKind k) =
+    (characterization :<@> parser) :>>= TyMaybeParse l ('Proxy :: Proxy inputKind)
+
+type TyMaybeParse k (inputKindProxy :: Proxy inputKind) =
+    'TyFunction TyMaybeParseDef ('Proxy :: Proxy (Maybe k)) ('Proxy :: Proxy (Parser inputKind k))
+data TyMaybeParseDef
+type instance TyFunctionClause TyMaybeParseDef (Maybe k) (Parser inputKind k) 'Nothing = 'Empty 'Proxy 'Proxy
+type instance TyFunctionClause TyMaybeParseDef (Maybe k) (Parser inputKind k) ('Just x) = Pure 'Proxy x
+
+-- | A special case of match, in which the characterization is on a token.
+--   You still have to indicate the kind of the input stream, but you can
+--   probably get away without an annotation on the 'Proxy.
+type MatchToken (characterization :: Characterization k l) (inputStreamProxy :: Proxy inputStream) =
+    Match characterization ('Token inputStreamProxy ('Proxy :: Proxy k))
+
+-- | An exact-match characterization. The input type must be the same as
+--   the argument type @token@.
+type Exact (token :: tokenKind) = 'TyFunction (ExactDef token) ('Proxy :: Proxy tokenKind) ('Proxy :: Proxy (Maybe tokenKind))
+data ExactDef (token :: tokenKind)
+type instance TyFunctionClause (ExactDef (token :: tokenKind)) tokenKind (Maybe tokenKind) input = TyFunctionClauseExact token input
+type family TyFunctionClauseExact (token :: tokenKind) (input :: tokenKind) :: Maybe tokenKind where
+    TyFunctionClauseExact token token = 'Just token
+    TyFunctionClauseExact token anythingElse = 'Nothing
+
+{-
+type Ex1 = Pure ('Proxy :: Proxy Type) 'True
 
 type TyNot = 'TyFunction TyNotDef ('Proxy :: Proxy Bool) ('Proxy :: Proxy Bool)
 data TyNotDef
@@ -263,9 +336,7 @@ type family BoolAnd (a :: Bool) (b :: Bool) :: Bool where
     BoolAnd a b = 'False
 
 type Ex4 = 'ApplyTyFunction TyAnd Ex3
-
--- | Use this to mark the EOF.
-data EOF = EOF
+-}
 
 -- | Show that a given type can be used to construct a value of some other
 --   type.
@@ -301,7 +372,7 @@ type Many (parser :: Parser inputKind outputKind) =
     'Suspend (ManyThunk parser) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (List outputKind))
 data ManyThunk (parser :: Parser inputKind outputKind)
 type instance Force (ManyThunk (parser :: Parser inputKind outputKind)) inputKind (List outputKind) =
-    ('Cons :<$> parser :<*> 'Suspend (ManyThunk parser) 'Proxy 'Proxy) :<|> 'Pure ('Proxy) ('Nil 'Proxy)
+    ('Cons :<$> parser :<*> 'Suspend (ManyThunk parser) 'Proxy 'Proxy) :<|> Pure ('Proxy) ('Nil 'Proxy)
 
 -- For the Many1 parser, we shall require a nonempty list.
 data NonEmptyList (t :: k) where
