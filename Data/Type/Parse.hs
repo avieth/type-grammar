@@ -336,6 +336,7 @@ type family Force (thunk :: t) inputKind outputKind :: Parser inputKind outputKi
 -- |
 -- = Some derived parsers
 
+infixl 4 :<$>
 type (:<$>) = 'Fmap
 
 type Pure (inputKindProxy :: Proxy inputKind) (x :: outputKind) =
@@ -344,12 +345,19 @@ type Pure (inputKindProxy :: Proxy inputKind) (x :: outputKind) =
 type EOF (inputKindProxy :: Proxy inputKind) (outputKindProxy :: Proxy outputKind) =
     'Negate ('Token inputKindProxy outputKindProxy)
 
+infixl 4 :<*>
 type (:<*>) = 'Ap
-type (:<|>) = 'Alt
 
+infixl 4 :<*
 type x :<* y = TyFst :<$> (TyCon '(,) :<$> x :<*> y)
+
+infixl 4 :*>
 type x :*> y = TySnd :<$> (TyCon '(,) :<$> x :<*> y)
 
+infixl 3 :<|>
+type (:<|>) = 'Alt
+
+infixl 1 :>>=
 type x :>>= y = 'Join (y :<$> x)
 
 -- To match on particular types, the programmar must characterize which
