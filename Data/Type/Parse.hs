@@ -455,3 +455,6 @@ type Many1 (parser :: Parser inputKind outputKind) =
 -- | 1 or more occurrences of @parser@, interspersed by @separator@.
 type SepBy (parser :: Parser inputKind outputKind) (separator :: Parser inputKind separatorKind) =
     (TyCon 'NonEmptyList) :<$> parser :<*> Many (separator :*> parser)
+
+type Optional (parser :: Parser inputKind outputKind) =
+    TyCon 'Just :<$> parser :<|> Pure 'Proxy 'Nothing
