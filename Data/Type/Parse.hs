@@ -131,8 +131,8 @@ data TyComposeDef2 (g :: TyFunction t u) (f :: TyFunction s t)
 type instance TyFunctionClause (TyComposeDef2 (g :: TyFunction t u) (f :: TyFunction s t)) s u x =
     g `At` (f `At` x)
 
-infixr 9 :.
-type g :. f = TyCompose `At` g `At` f
+infixr 9 ::.
+type g ::. f = TyCompose `At` g `At` f
 
 infixr 1 >>>
 type f >>> g = g :. f
@@ -158,7 +158,7 @@ data TySwapDef
 type instance TyFunctionClause TySwapDef (l, k) (k, l) '(x, y) = '(y, x)
 
 -- snd :: (s, t) -> t as a type function.
-type TySnd = TyFst :. TySwap
+type TySnd = TyFst ::. TySwap
 
 -- |
 -- = Input stream handling
@@ -193,6 +193,19 @@ type instance InputSplit k (l :: [k]) = InputSplitList l
 type family InputSplitList (l :: [k]) :: Maybe (k, [k]) where
     InputSplitList '[] = 'Nothing
     InputSplitList (x ': xs) = 'Just '(x, xs)
+
+-- | A list of types where the types can be of any kind.
+data Stream where
+    SEOF :: Stream
+    SCons :: t -> Stream -> Stream
+
+infixr 1 :.
+type (s :: k) :. (t :: Stream) = 'SCons s t
+
+type instance InputSplit (t :: Type) (s :: Stream) = InputSplitStream t s
+type family InputSplitStream (t :: Type) (s :: Stream) :: Maybe (t, Stream) where
+    InputSplitStream t 'SEOF = 'Nothing
+    InputSplitStream t ('SCons (x :: t) rest) = 'Just '(x, rest)
 
 -- |
 -- = Parsing
