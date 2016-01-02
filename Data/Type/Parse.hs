@@ -6,6 +6,10 @@ Licence     : BSD3
 Maintainer  : aovieth@gmail.com
 Stability   : experimental
 Portability : non-portable (GHC only)
+
+Pure functional applicative/monadic parsing, but at the type level.
+Your parsers parse types from types. They run at compile time.
+
 -}
 
 {-# LANGUAGE PolyKinds #-}
@@ -25,7 +29,6 @@ module Data.Type.Parse where
 
 import Data.Kind
 import Data.Proxy
-import qualified GHC.TypeLits as TypeLits (Nat, Symbol)
 
 -- | The idea: just as the typical haskell function s -> t maps values of
 --   type s to values of type t, we can define the type-level function
@@ -315,7 +318,7 @@ type family Force (thunk :: t) inputKind outputKind :: Parser inputKind outputKi
 -- |
 -- = Some derived parsers
 
-type (:<$>) = Fmap
+type (:<$>) = 'Fmap
 
 type Pure (inputKindProxy :: Proxy inputKind) (x :: outputKind) =
     TyConst :<$> ( (TyCon ('(,) x)) :<$> 'Trivial inputKindProxy)
@@ -323,8 +326,8 @@ type Pure (inputKindProxy :: Proxy inputKind) (x :: outputKind) =
 type EOF (inputKindProxy :: Proxy inputKind) (outputKindProxy :: Proxy outputKind) =
     'Negate ('Token inputKindProxy outputKindProxy)
 
-type (:<*>) = Ap
-type (:<|>) = Alt
+type (:<*>) = 'Ap
+type (:<|>) = 'Alt
 
 type x :<* y = TyFst :<$> (TyCon '(,) :<$> x :<*> y)
 type x :*> y = TySnd :<$> (TyCon '(,) :<$> x :<*> y)
