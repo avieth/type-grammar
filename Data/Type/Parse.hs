@@ -206,6 +206,7 @@ type instance InputSplit (t :: Type) (s :: Stream) = InputSplitStream t s
 type family InputSplitStream (t :: Type) (s :: Stream) :: Maybe (t, Stream) where
     InputSplitStream t 'SEOF = 'Nothing
     InputSplitStream t ('SCons (x :: t) rest) = 'Just '(x, rest)
+    InputSplitStream t ('SCons (x :: r) rest) = 'Nothing
 
 -- |
 -- = Parsing
