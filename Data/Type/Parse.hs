@@ -62,6 +62,101 @@ type family RunTyFunction (f :: TyFunction domain range) (x :: domain) :: range 
     RunTyFunction ('TyFunction functionDef ('Proxy :: Proxy domain) ('Proxy :: Proxy range)) x =
         TyFunctionClause functionDef domain range x
 
+type At f x = RunTyFunction f x
+
+-- |
+-- = Lifting type constructors to TyFunctions.
+--
+-- Type constructors (those things of kind k -> l) determine TyFunctions, but
+-- it takes a little bit of work to lift them.
+--
+-- First, we make a family which computes the kind of the 'TyFunction which
+-- they induce, which includes of course the domain and the range. For curried
+-- type constructors like '(,) we get curried TyFunctions.
+-- This kind is used as a parameter for the family @TyConstructors@, which
+-- takes the actual type constructor and computes the 'TyFunction type
+-- by way of TyConstructorDef, whose function clauses partially apply the
+-- constructor until it's saturated.
+--
+--   @
+--     :kind! TyCon '(,,) `At` Bool `At` Int `At` 'True
+--     TyCon '(,,) `At` Bool `At` Int `At` 'True :: (*, *, Bool)
+--     = '(Bool, Int, 'True)
+--   @
+--
+
+type TyCon (c :: k) = TyConstructor (TyConstructorFunctionKind c) c
+
+type family TyConstructorFunctionKind (c :: k) :: Type where
+    TyConstructorFunctionKind (c :: k -> l) = TyConstructorFunctionKindExplicit k l
+type family TyConstructorFunctionKindExplicit (domain :: Type) (range :: Type) :: Type where
+    TyConstructorFunctionKindExplicit domain (range1 -> range2) =
+        TyFunction domain (TyConstructorFunctionKindExplicit range1 range2)
+    TyConstructorFunctionKindExplicit domain range = TyFunction domain range
+
+type family TyConstructor (functionKind :: Type) (c :: k) :: functionKind where
+    TyConstructor (TyFunction domain range) (c :: domain -> range') =
+        'TyFunction (TyConstructorDef c) ('Proxy :: Proxy domain) ('Proxy :: Proxy range)
+
+data TyConstructorDef (c :: k)
+type instance TyFunctionClause (TyConstructorDef c) domain range x =
+    TyFunctionClauseConstructorDef c domain range x
+
+type family TyFunctionClauseConstructorDef (c :: k) (domain :: Type) (range :: Type) (x :: domain) :: range where
+    TyFunctionClauseConstructorDef (c :: domain -> range) domain (TyFunction range1 range2) x =
+        'TyFunction (TyConstructorDef (c x)) ('Proxy :: Proxy range1) ('Proxy :: Proxy range2)
+    TyFunctionClauseConstructorDef (c :: domain -> range) domain range x = c x
+
+type family TyConstructorAsTyFunction (c :: Type) :: Type where
+    TyConstructorAsTyFunction (s -> (t -> u)) = TyFunction s (TyConstructorAsTyFunction (t -> u))
+    TyConstructorAsTyFunction (s -> t) = TyFunction s t
+
+-- (.) :: (t -> u) -> (s -> t) -> (s -> u)
+-- This is a curried TyFunction. Observe how explicit we must be. Every
+-- parameter must be gathered up in the Def types, so that they are still
+-- around for use in the TyFunctionClause when we reach the end.
+type TyCompose = 'TyFunction TyComposeDef
+                             ('Proxy :: Proxy (TyFunction t u))
+                             ('Proxy :: Proxy (TyFunction (TyFunction s t) (TyFunction s u)))
+data TyComposeDef
+type instance TyFunctionClause TyComposeDef (TyFunction t u) (TyFunction (TyFunction s t) (TyFunction s u)) g =
+    'TyFunction (TyComposeDef1 g) ('Proxy :: Proxy (TyFunction s t)) ('Proxy :: Proxy (TyFunction s u))
+data TyComposeDef1 (g :: TyFunction t u)
+type instance TyFunctionClause (TyComposeDef1 (g :: TyFunction t u)) (TyFunction s t) (TyFunction s u) f =
+    'TyFunction (TyComposeDef2 g f) ('Proxy :: Proxy s) ('Proxy :: Proxy u)
+data TyComposeDef2 (g :: TyFunction t u) (f :: TyFunction s t)
+type instance TyFunctionClause (TyComposeDef2 (g :: TyFunction t u) (f :: TyFunction s t)) s u x =
+    g `At` (f `At` x)
+
+infixr 9 :.
+type g :. f = TyCompose `At` g `At` f
+
+infixr 1 >>>
+type f >>> g = g :. f
+
+-- id :: t -> t as a type function.
+type TyId = 'TyFunction TyIdDef ('Proxy :: Proxy k) ('Proxy :: Proxy k)
+data TyIdDef
+type instance TyFunctionClause TyIdDef k k x = x
+
+-- const :: t -> s -> t as a type function. We treat it uncurried, so it's more
+-- akin to uncurry const :: (t, s) -> t
+type TyConst = 'TyFunction TyConstDef ('Proxy :: Proxy (k, l)) ('Proxy :: Proxy k)
+data TyConstDef
+type instance TyFunctionClause TyConstDef (k, l) k '(x, y) = x
+
+-- fst :: (s, t) -> s as a type function. This is exactly the same as
+-- uncurry const.
+type TyFst = TyConst
+
+-- swap :: (s, t) -> (t, s)
+type TySwap = 'TyFunction TySwapDef ('Proxy :: Proxy (l, k)) ('Proxy :: Proxy (k, l))
+data TySwapDef
+type instance TyFunctionClause TySwapDef (l, k) (k, l) '(x, y) = '(y, x)
+
+-- snd :: (s, t) -> t as a type function.
+type TySnd = TyFst :. TySwap
+
 -- |
 -- = Input stream handling
 --
@@ -80,7 +175,7 @@ type family RunTyFunction (f :: TyFunction domain range) (x :: domain) :: range 
 -- is the kind of stream element, and the second is the type of the stream
 -- itself. Two instances are given.
 -- The instance for (Type -> Type) (input :: Type) describes how to handle a
--- sequence of type constructors, like Maybe [Maybe EOF].
+-- sequence of type constructors, like Maybe [Maybe End].
 type family InputSplit k (input :: inputKind) :: Maybe (k, inputKind)
 
 type instance InputSplit (Type -> Type) (ty :: Type) = InputSplitTypeStream ty
@@ -99,7 +194,7 @@ type family InputSplitList (l :: [k]) :: Maybe (k, [k]) where
 -- |
 -- = Parsing
 --
--- The following definitions give type-level parsing. It's probably good to
+-- The following definitions give type-level parsers. It's probably good to
 -- keep up an analogy with term-level parsers, as what we do is exactly that,
 -- but with terms replaced by types and types replaced by kinds.
 --
@@ -112,8 +207,7 @@ type family InputSplitList (l :: [k]) :: Maybe (k, [k]) where
 --     @
 --
 -- Instead of a type @Parser stream t@, we give a *kind* @Parser stream t@
--- inhabited by various types of parsers, like fmap, applicative pure and
--- <*>, monadic join, etc.
+-- inhabited by various types of parsers, like fmap, and monadic join.
 -- Whereas @runParser@ is a function on terms, we give @RunParser@, a function
 -- on types (a type family).
 
@@ -133,6 +227,7 @@ data Parser (input :: Type) (output :: Type) :: Type where
     -- Always parses, without consuming input.
     Trivial :: Proxy inputKind -> Parser inputKind ()
 
+    -- Never parses, never consumes input.
     -- NB this cannot be implemented in terms of Trivial and Negate, because
     -- 'Negate ('Trivial 'Proxy) :: Parser inputKind () but we need that
     -- output kind to be free, not ().
@@ -144,19 +239,10 @@ data Parser (input :: Type) (output :: Type) :: Type where
     -- Take a token from the stream.
     Token :: Proxy inputKind -> Proxy outputKind -> Parser inputKind outputKind
 
-    Fmap :: (k -> l) -> Parser inputKind k -> Parser inputKind l
-    Ap :: Parser inputKind (k -> l) -> Parser inputKind k -> Parser inputKind l
+    Fmap :: (TyFunction k l) -> Parser inputKind k -> Parser inputKind l
+    Ap :: Parser inputKind (TyFunction k l) -> Parser inputKind k -> Parser inputKind l
     Alt :: Parser inputKind outputKind -> Parser inputKind outputKind -> Parser inputKind outputKind
     Join :: Parser inputKind (Parser inputKind outputKind) -> Parser inputKind outputKind
-
-    -- Here's an asymmetry with the term parser case.
-    -- Using Fmap we can lift data constructors through parsers.
-    -- But what about type families? Those are weird animals, which cannot be
-    -- curried nor partially applied. To handle them, we offer one parser
-    -- type which applies a single-argument type family (no currying, use
-    -- tuples or similar). The arguments can be gathered using Fmap and Ap,
-    -- then applied using this constructor.
-    ApplyTyFunction :: TyFunction k l -> Parser inputKind k -> Parser inputKind l
 
     -- Recursive parsers naturally lead to infinite types. To make recursive
     -- parsers viable, we use explicit laziness. A new type, @thunk@, is
@@ -186,9 +272,6 @@ type family RunParser (parser :: Parser inputKind outputKind) (input :: inputKin
 
     RunParser ('Join parser) input = RunParserJoin (RunParser parser input)
 
-    RunParser ('ApplyTyFunction f parser) input =
-        RunParserApplyTyFunction f (RunParser parser input)
-
     RunParser ('Suspend thunk ('Proxy :: Proxy inputKind) ('Proxy :: Proxy outputKind)) input =
         RunParser (Force thunk inputKind outputKind) input
 
@@ -200,21 +283,21 @@ type family RunParserToken (split :: Maybe (outputKind, inputKind)) :: Result ou
     RunParserToken 'Nothing = 'NoParse
     RunParserToken ('Just '(token, remaining)) = 'Parsed token remaining
 
-type family RunParserFmap (f :: k -> l) (result :: Result k inputKind) :: Result l inputKind where
+type family RunParserFmap (f :: TyFunction k l) (result :: Result k inputKind) :: Result l inputKind where
     RunParserFmap f 'NoParse = 'NoParse
     RunParserFmap f ('Parsed (output :: k) remainder) =
-        'Parsed (f output) remainder
+        'Parsed (f `At` output) remainder
 
-type family RunParserAp (parserF :: Parser inputKind (k -> l)) (parserX :: Parser inputKind k) (input :: inputKind) :: Result l inputKind where
+type family RunParserAp (parserF :: Parser inputKind (TyFunction k l)) (parserX :: Parser inputKind k) (input :: inputKind) :: Result l inputKind where
     RunParserAp parserF parserX input = RunParserApLeft (RunParser parserF input) parserX
 
-type family RunParserApLeft (resultF :: Result (k -> l) inputKind) (parserX :: Parser inputKind k) :: Result l inputKind where
+type family RunParserApLeft (resultF :: Result (TyFunction k l) inputKind) (parserX :: Parser inputKind k) :: Result l inputKind where
     RunParserApLeft 'NoParse parserX = 'NoParse
     RunParserApLeft ('Parsed f remaining) parserX = RunParserApRight f (RunParser parserX remaining)
 
-type family RunParserApRight (f :: k -> l) (resultX :: Result k inputKind) :: Result l inputKind where
+type family RunParserApRight (f :: TyFunction k l) (resultX :: Result k inputKind) :: Result l inputKind where
     RunParserApRight f 'NoParse = 'NoParse
-    RunParserApRight f ('Parsed x remaining) = 'Parsed (f x) remaining
+    RunParserApRight f ('Parsed x remaining) = 'Parsed (f `At` x) remaining
 
 type family RunParserAlt (parserLeft :: Parser inputKind k) (parserRight :: Parser inputKind k) (input :: inputKind) :: Result k inputKind where
     RunParserAlt parserLeft parserRight input = RunParserAltLeft (RunParser parserLeft input) parserRight input
@@ -227,53 +310,26 @@ type family RunParserJoin (result :: Result (Parser inputKind k) inputKind) :: R
     RunParserJoin 'NoParse = 'NoParse
     RunParserJoin ('Parsed parser remainder) = RunParser parser remainder
 
-type family RunParserApplyTyFunction (f :: TyFunction k l) (result :: Result k inputKind) :: Result l inputKind where
-    RunParserApplyTyFunction f 'NoParse = 'NoParse
-    RunParserApplyTyFunction f ('Parsed x remaining) = 'Parsed (RunTyFunction f x) remaining
-
 type family Force (thunk :: t) inputKind outputKind :: Parser inputKind outputKind
 
-type TyConst (x :: k) = 'TyFunction (TyConstDef x) ('Proxy :: Proxy l) ('Proxy :: Proxy k)
-data TyConstDef (x :: k)
-type instance TyFunctionClause (TyConstDef (x :: k)) l k anything = x
+-- |
+-- = Some derived parsers
+
+type (:<$>) = Fmap
 
 type Pure (inputKindProxy :: Proxy inputKind) (x :: outputKind) =
-    'ApplyTyFunction (TyConst x) ('Trivial inputKindProxy)
+    TyConst :<$> ( (TyCon ('(,) x)) :<$> 'Trivial inputKindProxy)
 
 type EOF (inputKindProxy :: Proxy inputKind) (outputKindProxy :: Proxy outputKind) =
     'Negate ('Token inputKindProxy outputKindProxy)
 
-type (:<@>) = ApplyTyFunction
-type (:<$>) = Fmap
 type (:<*>) = Ap
 type (:<|>) = Alt
 
-type TyFst = 'TyFunction TyFstDef ('Proxy :: Proxy (k, l)) ('Proxy :: Proxy k)
-data TyFstDef
-type instance TyFunctionClause TyFstDef (k, l) k '(x, y) = x
+type x :<* y = TyFst :<$> (TyCon '(,) :<$> x :<*> y)
+type x :*> y = TySnd :<$> (TyCon '(,) :<$> x :<*> y)
 
-type TySnd = 'TyFunction TySndDef ('Proxy :: Proxy (k, l)) ('Proxy :: Proxy l)
-data TySndDef
-type instance TyFunctionClause TySndDef (k, l) l '(x, y) = y
-
-type x :<* y = 'ApplyTyFunction TyFst ( '(,) :<$> x :<*> y )
-type x :*> y = 'ApplyTyFunction TySnd ( '(,) :<$> x :<*> y )
-
--- | To give an analogue for >>=, we might naively try
---
---     @type x :>>= y = 'Join (y :<$> x)@
---
---   but in order for this to be of any use, we must have @y :: k -> Parser i l@.
---   That's a bit too restrictive; we'd rather have @y@ represent some type
---   family with codomain @Parser i l@. So in fact we want
---
---     type x :>>= y = 'Join ('ApplyTyFunction y x)
---
---   So the kind of :>>= is in fact
---
---     @Parser inputKind k -> TyFunction k (Parser inputKind l) -> Parser inputKind l@
---
-type x :>>= y = 'Join ('ApplyTyFunction y x)
+type x :>>= y = 'Join (y :<$> x)
 
 -- To match on particular types, the programmar must characterize which
 -- types will match, by giving a TyFunction with codomain Maybe k and
@@ -291,7 +347,7 @@ type x :>>= y = 'Join ('ApplyTyFunction y x)
 type Characterization k l = TyFunction k (Maybe l)
 
 type Match (characterization :: Characterization k l) (parser :: Parser inputKind k) =
-    (characterization :<@> parser) :>>= TyMaybeParse l ('Proxy :: Proxy inputKind)
+    (characterization :<$> parser) :>>= TyMaybeParse l ('Proxy :: Proxy inputKind)
 
 type TyMaybeParse k (inputKindProxy :: Proxy inputKind) =
     'TyFunction TyMaybeParseDef ('Proxy :: Proxy (Maybe k)) ('Proxy :: Proxy (Parser inputKind k))
@@ -313,30 +369,6 @@ type instance TyFunctionClause (ExactDef (token :: tokenKind)) tokenKind (Maybe 
 type family TyFunctionClauseExact (token :: tokenKind) (input :: tokenKind) :: Maybe tokenKind where
     TyFunctionClauseExact token token = 'Just token
     TyFunctionClauseExact token anythingElse = 'Nothing
-
-{-
-type Ex1 = Pure ('Proxy :: Proxy Type) 'True
-
-type TyNot = 'TyFunction TyNotDef ('Proxy :: Proxy Bool) ('Proxy :: Proxy Bool)
-data TyNotDef
-type instance TyFunctionClause TyNotDef Bool Bool 'True = 'False
-type instance TyFunctionClause TyNotDef Bool Bool 'False = 'True
-
-type Ex2 = 'ApplyTyFunction TyNot Ex1
-
--- Tuple the outputs of Ex1 and Ex2.
-type Ex3 = 'Ap ('Fmap '(,) Ex1) Ex2
-
-type TyAnd = 'TyFunction TyAndDef ('Proxy :: Proxy (Bool, Bool)) ('Proxy :: Proxy Bool)
-data TyAndDef
-type instance TyFunctionClause TyAndDef (Bool, Bool) Bool '(a, b) = BoolAnd a b
-
-type family BoolAnd (a :: Bool) (b :: Bool) :: Bool where
-    BoolAnd 'True 'True = 'True
-    BoolAnd a b = 'False
-
-type Ex4 = 'ApplyTyFunction TyAnd Ex3
--}
 
 -- | Show that a given type can be used to construct a value of some other
 --   type.
@@ -372,7 +404,7 @@ type Many (parser :: Parser inputKind outputKind) =
     'Suspend (ManyThunk parser) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (List outputKind))
 data ManyThunk (parser :: Parser inputKind outputKind)
 type instance Force (ManyThunk (parser :: Parser inputKind outputKind)) inputKind (List outputKind) =
-    ('Cons :<$> parser :<*> 'Suspend (ManyThunk parser) 'Proxy 'Proxy) :<|> Pure ('Proxy) ('Nil 'Proxy)
+    ((TyCon 'Cons) :<$> parser :<*> 'Suspend (ManyThunk parser) 'Proxy 'Proxy) :<|> Pure ('Proxy) ('Nil 'Proxy)
 
 -- For the Many1 parser, we shall require a nonempty list.
 data NonEmptyList (t :: k) where
@@ -389,8 +421,8 @@ instance
 
 -- | At least 1 occurrence of a parser.
 type Many1 (parser :: Parser inputKind outputKind) =
-    'NonEmptyList :<$> parser :<*> Many parser
+    (TyCon 'NonEmptyList) :<$> parser :<*> Many parser
 
 -- | 1 or more occurrences of @parser@, interspersed by @separator@.
 type SepBy (parser :: Parser inputKind outputKind) (separator :: Parser inputKind separatorKind) =
-    'NonEmptyList :<$> parser :<*> Many (separator :*> parser)
+    (TyCon 'NonEmptyList) :<$> parser :<*> Many (separator :*> parser)
