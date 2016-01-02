@@ -234,6 +234,10 @@ data Result output remainder where
     NoParse :: Result output remainder
     Parsed :: output -> remainder -> Result output remainder
 
+type TyResultValue = 'TyFunction TyResultValueDef ('Proxy :: Proxy (Result output remainder)) ('Proxy :: Proxy output)
+data TyResultValueDef
+type instance TyFunctionClause TyResultValueDef (Result output remainder) output ('Parsed x r) = x
+
 -- | The parser kind.
 --
 --   Some parsers must be explicitly kinded. Pure, Empty, Match in particular.
