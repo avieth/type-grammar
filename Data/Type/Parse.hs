@@ -29,6 +29,7 @@ module Data.Type.Parse where
 
 import Data.Kind
 import Data.Proxy
+import GHC.TypeLits (Character, Symbol, SplitSymbol, ConsSymbol)
 
 -- | The idea: just as the typical haskell function s -> t maps values of
 --   type s to values of type t, we can define the type-level function
@@ -44,11 +45,15 @@ import Data.Proxy
 --
 --   We of course must defer to the built-in notion of function (->). Doing
 --   the same thing up here, with types and kinds, defers to the built-in
---   notion of type-function, the type family! But since we can't just embed
---   a type family into the GADT constructor as we did above, we take a type
---   called @functionDef@ assuming that it has appropriate type families defined
---   on it. Check out @TyFunctionClause@, which is analagous to pattern
---   matching on a particular kind.
+--   notion of type-function, the type family!
+--
+--   Naively, we could try the very same thing, but it's no good because
+--   type families can only be given fully saturated! So even though the
+--   kind of our type family may be domain -> range, we cannot use it to
+--   obtain a *type* of that kind, and therefore cannot embed it into a
+--   type like 'Function above.
+--
+--   As a workaround, we use a
 --
 data TyFunction (domain :: Type) (range :: Type) :: Type where
     TyFunction :: functionDef -> Proxy domain -> Proxy range -> TyFunction domain range
@@ -131,8 +136,8 @@ data TyComposeDef2 (g :: TyFunction t u) (f :: TyFunction s t)
 type instance TyFunctionClause (TyComposeDef2 (g :: TyFunction t u) (f :: TyFunction s t)) s u x =
     g `At` (f `At` x)
 
-infixr 9 ::.
-type g ::. f = TyCompose `At` g `At` f
+infixr 9 :.
+type g :. f = TyCompose `At` g `At` f
 
 infixr 1 >>>
 type f >>> g = g :. f
@@ -158,7 +163,7 @@ data TySwapDef
 type instance TyFunctionClause TySwapDef (l, k) (k, l) '(x, y) = '(y, x)
 
 -- snd :: (s, t) -> t as a type function.
-type TySnd = TyFst ::. TySwap
+type TySnd = TyFst :. TySwap
 
 -- |
 -- = Input stream handling
@@ -176,9 +181,7 @@ type TySnd = TyFst ::. TySwap
 -- remainder.
 -- We do something similar here, using a type family. The first parameter
 -- is the kind of stream element, and the second is the type of the stream
--- itself. Two instances are given.
--- The instance for (Type -> Type) (input :: Type) describes how to handle a
--- sequence of type constructors, like Maybe [Maybe End].
+-- itself.
 type family InputSplit k (input :: inputKind) :: Maybe (k, inputKind)
 
 type instance InputSplit (Type -> Type) (ty :: Type) = InputSplitTypeStream ty
@@ -194,19 +197,7 @@ type family InputSplitList (l :: [k]) :: Maybe (k, [k]) where
     InputSplitList '[] = 'Nothing
     InputSplitList (x ': xs) = 'Just '(x, xs)
 
--- | A list of types where the types can be of any kind.
-data Stream where
-    SEOF :: Stream
-    SCons :: t -> Stream -> Stream
-
-infixr 1 :.
-type (s :: k) :. (t :: Stream) = 'SCons s t
-
-type instance InputSplit (t :: Type) (s :: Stream) = InputSplitStream t s
-type family InputSplitStream (t :: Type) (s :: Stream) :: Maybe (t, Stream) where
-    InputSplitStream t 'SEOF = 'Nothing
-    InputSplitStream t ('SCons (x :: t) rest) = 'Just '(x, rest)
-    InputSplitStream t ('SCons (x :: r) rest) = 'Nothing
+type instance InputSplit Character (s :: Symbol) = SplitSymbol s
 
 -- |
 -- = Parsing
