@@ -417,8 +417,15 @@ instance
 type Many1 (parser :: Parser inputKind outputKind) =
     (C 'NonEmptyList) :<$> parser :<*> Many parser
 
--- | 1 or more occurrences of @parser@, interspersed by @separator@.
 type SepBy (parser :: Parser inputKind outputKind) (separator :: Parser inputKind separatorKind) =
+    'Suspend (SepByThunk parser separator) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (List outputKind))
+data SepByThunk (parser :: Parser inputKind outputKind) (separator :: Parser inputKind separatorKind)
+type instance Force (SepByThunk (parser :: Parser inputKind outputKind) (separator :: Parser inputKind separatorKind)) inputKind (List outputKind) =
+         (C 'Cons :<$> parser :<* separator :<*> SepBy parser separator)
+    :<|> (C 'Cons :<$> parser :<*> Pure 'Proxy ('Nil 'Proxy))
+
+-- | 1 or more occurrences of @parser@, interspersed by @separator@.
+type SepBy1 (parser :: Parser inputKind outputKind) (separator :: Parser inputKind separatorKind) =
     (C 'NonEmptyList) :<$> parser :<*> Many (separator :*> parser)
 
 type Optional (parser :: Parser inputKind outputKind) =
