@@ -18,310 +18,364 @@ Portability : non-portable (GHC only)
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Examples.SQL where
 
-import GHC.TypeLits (KnownSymbol, symbolVal, Symbol)
+import Data.Kind
 import Data.Proxy
+import Data.Type.Function
+import Data.Type.Parse
+import GHC.TypeLits -- (KnownSymbol, symbolVal, Symbol, Character, IsAlphaNum)
 import Data.String (IsString, fromString)
-import Data.Type.Grammar
 
--- The form of PostgreSQL 8 point something DELETE is this
+-- With data characters we'll just write SQL strings as types.
+-- Our parsers will recognize well-formed SQL and produce Command types,
+-- which can be consistency-checked against a database type.
+-- To make the actual SQL, we can just symbolVal the string. That would be
+-- a nice property: the SQL that runs is exactly the SQL that you write.
+-- That means we'll have to parse the ? to mean some parameter, and we'll
+-- have to infer the type of that parameter from the rest of the string.
+-- Hm, but no, it'd be better if the programmar could write something like
 --
---   DELETE FROM [ ONLY ] table
---      [ USING usinglist ]
---      [ WHERE condition ]
+--   ?name
 --
--- For the sake of a brief demonstration, we'll just assume (very incorrectly)
--- that table, usinglist, and condition grammars consist of a single name.
+-- so that they could substitute using names, rather than position.
+
+data TableName where
+    TableName :: Identifier -> TableName
+type ParseTableName = C 'TableName :<$> (ParseIdentifier :<|> Quoted ParseIdentifier)
+{-
+
+data TableExpression where
+    TableLiteral :: TableName -> TableExpression
+    TableCrossJoin :: TableExpression -> TableExpression -> TableExpression
+    TableInnerJoin :: TableExpression -> TableExpression -> JoinCondition -> TableExpression
+    TableLeftJoin :: TableExpression -> TableExpression -> JoinCondition -> TableExpression
+    TableRightJoin :: TableExpression -> TableExpression -> JoinCondition -> TableExpression
+    TableFullJoin :: TableExpression -> TableExpression -> JoinCondition -> TableExpression
+
+-- Parsing table expressions is an exercise in infix grammars.
+
+type ParseTableExpression = ParseTableExpressionBase
+
+-- Parsers for the infix join operators.
+type ParseCrossJoin = ExactStringCI "CROSS" :*>  JOIN) 'Proxy :*> 'Trivial 'Proxy
+type ParseInnerJoin = Optional (MatchToken (Exact INNER) 'Proxy) :*> MatchToken (Exact JOIN) 'Proxy :*> 'Trivial 'Proxy
+type ParseLeftJoin = MatchToken (Exact LEFT) 'Proxy :*> Optional (MatchToken (Exact OUTER) 'Proxy) :*> 'Trivial 'Proxy
+type ParseRightJoin = MatchToken (Exact RIGHT) 'Proxy :*> Optional (MatchToken (Exact OUTER) 'Proxy) :*> 'Trivial 'Proxy
+type ParseFullJoin = MatchToken (Exact FULL) 'Proxy :*> Optional (MatchToken (Exact OUTER) 'Proxy) :*> 'Trivial 'Proxy
+
+
+
+{-
+type ParseTableExpressionLeftAssocJoin =
+         MatchToken (Exact CROSS
+    :<|>
+-}
+
+type ParseTableExpressionBase =
+
+    (     (TyCon TableLiteral :<$> ParseTableName)
+     :<|> (    MatchToken (Exact (:<)) 'Proxy
+           :*> 'Suspend ParseTableExpressionThunk 'Proxy ('Proxy :: Proxy TableExpression)
+           :<* MatchToken (Exact (:>)) 'Proxy
+          )
+    )
+
+data ParseTableExpressionThunk
+type instance Force ParseTableExpressionThunk inputKind TableExpression = ParseTableExpression
+-}
+data JoinCondition where
+    NaturalJoin :: JoinCondition
+    -- TODO Join predicate and using clause.
+
+-- An identifier with an optional qualifier.
+data Identifier where
+    Identifier :: Maybe Symbol -> Symbol -> Identifier
+
+-- Parses a safe string identifier. It's very conservative: only alphanumerics
+-- and underscores.
+type ParseIdentifier =
+         C 'Identifier
+    :<$> Optional (Quoted ParseStringNoQuotes :<* Many Whitespace :<* ExactChar '.' :<* Many Whitespace)
+    :<*> Quoted ParseStringNoQuotes
+type ParseStringNoQuotes =
+         F NonEmptyListToString
+    :<$> Many1 (MatchToken (F (BooleanCharacterization ('Proxy :: Proxy Character) (F IsIdentifierCharDef))) ('Proxy :: Proxy Symbol))
+data IsIdentifierCharDef (c :: Character)
+type instance FunctionCodomain IsIdentifierCharDef = Bool
+type instance EvalFunction (IsIdentifierCharDef c) = IsIdentifierChar c
+type family IsIdentifierChar (c :: Character) :: Bool where
+    IsIdentifierChar '_' = 'True
+    IsIdentifierChar c = IsAlphaNum c
+
+type family IsNotQuote (c :: Character) :: Bool where
+    IsNotQuote '\"' = 'False
+    IsNotQuote c = 'True
+data IsNotQuoteDef (c :: Character)
+type instance FunctionCodomain IsNotQuoteDef = Bool
+type instance EvalFunction (IsNotQuoteDef c) = IsNotQuote c
+
+--type StringNoQuotes = Many (MatchToken (F (BooleanCharacterization ('Proxy :: Proxy Character) (F IsNotQuoteDef))) ('Proxy :: Proxy Symbol))
+--type QuotedString = ExactChar '\"' :*> StringNoQuotes :<* ExactChar '\"'
+type Quoted parser = ExactChar '\"' :*> parser :<* ExactChar '\"'
+
+data Constant where
+    NumberConstant :: SomeNumber -> Constant
+    StringConstant :: Symbol -> Constant
+    BoolConstant :: Bool -> Constant
+
+type ParseConstant =
+         (C 'BoolConstant :<$> ParseBoolConstant)
+    :<|> (C 'NumberConstant :<$> ParseNumberConstant)
+    :<|> (C 'StringConstant :<$> ParseStringConstant)
+
+type ParseTrue =
+         (ExactStringCI "true" :*> Pure 'Proxy 'True)
+    :<|> (ExactCharCI 't' :*> Pure 'Proxy 'True)
+
+type ParseFalse =
+         (ExactStringCI "false" :*> Pure 'Proxy 'True)
+    :<|> (ExactCharCI 'f' :*> Pure 'Proxy 'True)
+
+type ParseBoolConstant = ParseTrue :<|> ParseFalse
+
+data CharIsDigit (c :: Character)
+type instance FunctionCodomain CharIsDigit = Maybe Nat
+type instance EvalFunction (CharIsDigit c) = EvalCharIsDigit c
+type family EvalCharIsDigit (c :: Character) :: Maybe Nat where
+    EvalCharIsDigit '1' = 'Just 1
+    EvalCharIsDigit '2' = 'Just 2
+    EvalCharIsDigit '3' = 'Just 3
+    EvalCharIsDigit '4' = 'Just 4
+    EvalCharIsDigit '5' = 'Just 5
+    EvalCharIsDigit '6' = 'Just 6
+    EvalCharIsDigit '7' = 'Just 7
+    EvalCharIsDigit '8' = 'Just 8
+    EvalCharIsDigit '9' = 'Just 9
+    EvalCharIsDigit '0' = 'Just 0
+    EvalCharIsDigit c = 'Nothing
+
+type Digit = MatchToken (F CharIsDigit) 'Proxy
+
+data SumDecimal (l :: NonEmptyList Nat)
+type instance FunctionCodomain SumDecimal = Nat
+type instance EvalFunction (SumDecimal lst) = EvalSumDecimal lst
+type family EvalSumDecimal (l :: NonEmptyList Nat) :: Nat where
+    EvalSumDecimal ('NonEmptyList top list) =
+        SumExponentiated (Exponentiate ('Cons top list) (EvalFunction (ListLength ('Cons top list))))
+type family Exponentiate (l :: List Nat) (length :: Nat) :: List (Nat, Nat) where
+    Exponentiate ('Nil 'Proxy) l = 'Nil 'Proxy
+    Exponentiate ('Cons x rest) l = 'Cons '(x, l - 1) (Exponentiate rest (l - 1))
+type family SumExponentiated (l :: List (Nat, Nat)) :: Nat where
+    SumExponentiated ('Nil 'Proxy) = 0
+    SumExponentiated ('Cons '(n, e) rest) = (n GHC.TypeLits.* (10 ^ e)) + SumExponentiated rest
+
+type NaturalNumber = F SumDecimal :<$> (Many1 Digit)
+
+data CharIsSign (c :: Character)
+type instance FunctionCodomain CharIsSign = Bool
+type instance EvalFunction (CharIsSign c) = EvalCharIsSign c
+type family EvalCharIsSign (c :: Character) :: Bool where
+    EvalCharIsSign '-' = 'True
+    EvalCharIsSign '+' = 'True
+    EvalCharIsSign c = 'False
+type Sign = MatchToken (F (BooleanCharacterization 'Proxy (F CharIsSign))) 'Proxy
+
+type DecimalPoint = ExactChar '.'
+
+-- Since we have no type-level counterpart of a floating-point number, we just
+-- give 'SomeNumber
+data SomeNumber = SomeNumber
+type ParseNumberConstant =
+         Optional Sign
+    :*>  NaturalNumber
+    :*>  Optional (DecimalPoint :*> NaturalNumber)
+    :*>  Pure 'Proxy 'SomeNumber
+
+data IsSingleQuote (c :: Character)
+type instance FunctionCodomain IsSingleQuote = Bool
+type instance EvalFunction (IsSingleQuote c) = EvalIsSingleQuote c
+type family EvalIsSingleQuote (c :: Character) :: Bool where
+    EvalIsSingleQuote '\'' = 'True
+    EvalIsSingleQuote c = 'False
+
+type EscapedSingleQuote = ExactChar '\'' :*> ExactChar '\'' :*> Pure 'Proxy '\''
+
+type ParseStringConstant =
+         ExactChar '\''
+
+    :*>  (    F ListToString
+         :<$> (Many (    EscapedSingleQuote
+                    :<|> (MatchToken (F (BooleanCharacterization 'Proxy (F Not :. F IsSingleQuote))) ('Proxy :: Proxy Symbol)))
+                    
+         ))
+    :<*  ExactChar '\''
+
+type ParseType =
+         F ListToString
+    :<$> Many (MatchToken (F (BooleanCharacterization 'Proxy (F IsIdentifierCharDef))) ('Proxy :: Proxy Symbol))
+
+-- TODO since Cast is postfix, we actually require a Kleisli arrow
+--   Expression -> Parser Symbol Cast
+-- allowing us to :>>= onto an existing Expression parser.
+data Cast where
+    Cast :: Expression -> Symbol -> Cast
+type ParseCast =
+         (C 'Cast)
+    :<$> ParseExpression
+    :<*  Many Whitespace
+    :<*  ExactString "::"
+    :<*  Many Whitespace
+    :<*> ParseType
+
+data Arguments where
+    Arguments :: List Expression -> Arguments
+
+-- Parse a comma-separated, parens-enclosed argument list.
+type ParseArguments =
+         ExactChar '('
+    :*>  Many Whitespace
+    :*>  (C 'Arguments :<$> SepBy ParseExpression (Many Whitespace :*> ExactChar ',' :<* Many Whitespace))
+    :<*  Many Whitespace
+    :<*  ExactChar ')'
+
+data FunctionAp where
+    FunctionAp :: Symbol -> Arguments -> FunctionAp
+
+-- Parse a function application. Functions are just Symbols.
+type ParseFunctionAp =
+         C 'FunctionAp
+    :<$> (F ListToString :<$> Many (MatchToken (F (BooleanCharacterization 'Proxy (F IsIdentifierCharDef))) ('Proxy :: Proxy Symbol)))
+    :<*  Many Whitespace
+    :<*> ParseArguments
+
+data Expression where
+    ExpressionIdentifier :: Identifier -> Expression 
+    ExpressionConstant :: Constant -> Expression
+    ExpressionCast :: Cast -> Expression
+    ExpressionFunctionAp :: FunctionAp -> Expression
+
+-- We MUST have support for plugin-extended infix operators, as these do
+-- arise in PostGIS. 
+-- And then of course we'll have to deal with their precedence. 
+-- So what's the plan? Parameter is a list of Type, each assumed to be a
+-- plugin? These plugins determine 0 or more infix operators (strings). They
+-- all left-associate with the same precedence, as according to the postgres
+-- docs.
 --
--- To start, we'll state the grammar, known as the type Gdelete. We'll
--- factor out the table, usinglist, and condition parts. The symbols like
--- DELETE and FROM are defined later on.
-
-type Gtable = GSymbol Name
-type Gusinglist = GSymbol Name
-type Gcondition = GSymbol Name
-
-type Gdelete = GAllOf '[
-      GSymbol DELETE, GSymbol FROM, GOptional (GSymbol ONLY), Gtable
-      , GOptional (GAllOf '[GSymbol USING, Gusinglist])
-      , GOptional (GAllOf '[GSymbol WHERE, Gcondition])
-    ]
-
--- This looks quite a lot like the grammar definition from the docs, and we're
--- ready to use it right away, to recognize well-formed DELETE commands.
-
-gdelete :: Proxy Gdelete
-gdelete = Proxy
-
-my_table = Name (Proxy :: Proxy "my_table")
-
-example1 :: t -> DELETE '[] (FROM '[] (Name '[P "my_table"] t))
-example1 = DELETE . FROM . my_table
-
--- The type is inferred by GHC, but it's state here just for demonstration.
--- It's a function type because what we're dealing with here is a kind of
--- stream of constructors for * -> * types, analagous to a stream of Char's
--- when we're parsing strings. When we're ready to parse a stream of
--- constructors, we plug it with GEnd, forming a complete sentence.
-
-outcome1
-    :: PAllOf
-         '[ PSymbol DELETE '[] -- DELETE type takes 0 type parameters (empty list)
-          , PSymbol FROM '[]   -- FROM also takes 0 type parameters
-          , POptional 'Nothing -- ONLY part is not present
-          , PSymbol Name '[P "my_table"] -- Name takes 1 type parameter, a Symbol
-          , POptional 'Nothing -- USING part is not present
-          , POptional 'Nothing -- WHERE part is not present
-          ]
-GrammarParse outcome1 GEnd = parseDerivedGrammar gdelete (example1 GEnd)
-
--- Some important points to highlight:
+-- Compare at our treatment of functions. We need not have a list of valid
+-- function strings, we can instead take any string from the proper character
+-- set and assume its a function. Nonexistent functions can be eliminated at
+-- type-checking time.
 --
--- 1. This is not a partial pattern match. GHC knows that example1 GEnd
---    does indeed parse under the grammar Gdelete.
+-- Another thing to consider: the cast infix operator ::. Its RHS must be a
+-- type, so we'll have to be able to parse postgresql types, no? And these
+-- can be extended. If we wish to use that thing in our Expr grammar, we'll
+-- have to include postgresql types in the base parser, even though they're
+-- only valid behind a cast.
+-- No no no it's actually ok. Since it binds very tight, we can just include
+-- it as part of the Literal parser. Indeed, the postgres precedence chart
+-- is not that great a guide here. It even includes the '.' "operator" for
+-- qualifying names.
 --
--- 2. The match on GEnd indicates that the entire sequence was consumed.
---    This is also worked out by GHC at compile time, as part of the
---    process of parsing.
+-- In search of a plan, I think it's ideal to take a "types-first" approach, or
+-- in this case "kinds-first". What are the kinds we would like to deal with?
+--   - Literal
+--     - Number
+--     - String
+--     - Bool
+--     - Qualified name (with the dot)
+--   - Casted something (expression for instance, but we can leave it free I believe)
+--   - True infix operators: arithmetic, comparison, logical, extensible.
+--     To be consistent with the docs, we must parse on the strings themselves
+--     (so that, for instance, even an overloaded + has higher precedence than
+--     some other custom opeartor).
+--   - Function application: a string then a list of arguments.
+--   - Various postfix things like IS NULL. 
+-- Then we should be able to roll these all into one...
+-- infix rec :>>= tryPostfix.
+-- Right. So the base case is a literal, a function application, or
+-- parenthesised recursion.
+-- Then we throw on infix operators.
+-- Then atop then we check, via bind, whether a postfix operator lurks.
+-- And that's it.
+-- All we must hope for now is that it doesn't take 8gb of memory and a day to
+-- compile.
 --
--- 3. The type annotation is optional. GHC can infer the type of the parsed
---    thing. Here, the type is rather messy (but this can be improved, as we
---    shall see soon). However messy, it is still very enlightening. It shows
---    that we've discovered the table name "my_table", and each of the
---    optionals reveals that the corresponding optional part was not found in
---    the input sentence.
+-- As for extensibility, perhaps we should just make a PostgresEnv type which
+-- determines Symbols for all of the available functions, operators, types, etc.
+-- BUT of course this is not needed for parsing. Parsing just checks
+-- well-formedness and we want to keep it as light as possible, for I believe
+-- that type-checking the parsed types will not be as performance-dangerous.
+
+type ParseExpression = 'Suspend ParseExpressionThunk ('Proxy :: Proxy Symbol) ('Proxy :: Proxy Expression)
+data ParseExpressionThunk
+type instance Force ParseExpressionThunk Symbol Expression =
+
+         (C 'ExpressionFunctionAp :<$> ParseFunctionAp)
+    :<|> (C 'ExpressionConstant :<$> ParseConstant)
+    :<|> (C 'ExpressionIdentifier :<$> ParseIdentifier)
+
+-- Observation: adding a new level to the infix parser severely degrades
+-- performance.
 --
--- The next case shows what happens to the first optional when we throw in
--- an ONLY term.
+-- NB: precedence here is ascending, whereas in the postgres docs table it's
+-- descending.
+type ParseInfix = MkParseExpr '[
+                                 Infixl '[ Many Whitespace :*> ExactStringCI "OR" :<* Many Whitespace ]
+                               , Infixl '[ Many Whitespace :*> ExactStringCI "AND" :<* Many Whitespace ]
+                               , Infix '[ Many Whitespace :*> ExactString "=" :<* Many Whitespace ]
+                               ]
+                              (ParseExpression)
+                              (Many Whitespace :*> ExactChar '(' :*> Many Whitespace :*> Pure 'Proxy '())
+                              (Many Whitespace :*> ExactChar ')' :*> Many Whitespace :*> Pure 'Proxy '())
 
-example2 = DELETE . FROM . ONLY . my_table
 
-outcome2
-    :: PAllOf
-          '[ PSymbol DELETE '[]
-           , PSymbol FROM '[]
-           , POptional ('Just (PSymbol ONLY '[])) -- Looks, it's now 'Just.
-           , PSymbol Name '[P "my_table"]
-           , POptional 'Nothing
-           , POptional 'Nothing
-           ]
-GrammarParse outcome2 GEnd = parseDerivedGrammar gdelete (example2 GEnd)
+data Restriction where
+    Restriction :: Expr Expression Symbol -> Restriction
 
--- And, of course, if we write garbage, GHC makes sure we don't hope to obtain
--- anything more than garbage.
+type ParseRestriction = C 'Restriction :<$> ParseInfix
 
-example3 = DELETE . ONLY . FROM
+data Command where
+    Delete :: TableName -> Maybe Restriction -> Command
 
-GrammarNoParse = parseDerivedGrammar gdelete (example3 GEnd)
+type ParseDelete = 
+         (C 'Delete)
+    :<$  ExactStringCI "DELETE"
+    :<*  Many1 Whitespace
+    :<*  ExactStringCI "FROM"
+    :<*  Many1 Whitespace
+    :<*> ParseTableName
+    :<*> Optional (    Many1 Whitespace
+                  :*>  ExactStringCI "WHERE"
+                  :*>  Many1 Whitespace
+                  :*>  ParseRestriction
+                  )
 
--- If we change it to @GrammarParse outcome3 GEnd@, we get a delightful
--- error:
---
---   Couldn't match type ‘GrammarNoParse’ with ‘GrammarParse t GEnd’
---      Expected type: GrammarParse t GEnd
---      Actual type: ParseDerivedGrammarK
---                       Gdelete (DELETE '[] (ONLY '[] (FROM '[] GEnd)))
---
--- That actual type, you can check in GHCi to be GrammarNoParse
---
---   :kind! ParseDerivedGrammarK Gdelete (DELETE '[] (ONLY '[] (FROM '[] GEnd))) 
---
---   ParseDerivedGrammarK Gdelete (DELETE '[] (ONLY '[] (FROM '[] GEnd))) :: *
---   = GrammarNoParse
---
--- After a parse, we obtain those P-prefixed datatypes, which are--unlike the
--- G-prefixed symbolic grammar types--actually inhabited. Thus we can
--- grab, say, outcome1, and do some computation
+type ExampleDelete1 = "DELETE FROM \"mytable\" WHERE \"mytable\".\"id\" = 1"
+type ExampleDelete2 = "DELETE FROM \"mytable\" WHERE \"mytable\".\"id\" = 1 AND \"id\" = 'some_string'"
 
-printOutcome1 :: String
-printOutcome1 = case outcome1 of
-    PAllOfCons
-        (PSymbol (DELETE _))
-        (PAllOfCons
-        (PSymbol (FROM _))
-        (PAllOfCons
-        (POptionalNothing)
-        (PAllOfCons
-        (PSymbol (Name nameProxy _))
-        (PAllOfCons
-        (POptionalNothing)
-        (PAllOfCons
-        (POptionalNothing)
-        PAllOfNil)))))
-        -> "DELETE FROM " ++ symbolVal nameProxy
+{-
+class MakeQuery (cmd :: Command) m where
+    makeQuery :: Proxy cmd -> m
 
--- That's not so great, right? I count at least two issues:
---
--- 1. The datatype is unwieldly. We have to pattern match on the heterogeneous
---    list PAllOf, which is a bit left-field when we think we're working with
---    SQL deletes.
---
--- 2. Why bother constructing the datatype just to print it? Surely we can
---    print it directly from the sentence, and maintain type-safety by adding
---    a constraint to this print function asserting the sentence matches
---    Gdelete.
---
--- Number 2 is easily demonstrated:
+instance
+    ( IsString m
+    , Monoid m
+    , KnownSymbol sym
+    ) => MakeQuery ('Delete ('TableName sym)) m
+  where
+    makeQuery _ = mconcat [
+          fromString "DELETE FROM "
+        , fromString (quoteSymbol (Proxy :: Proxy sym))
+        ]
 
-printDeleteCommand
-    :: ( FullParse Gdelete term 
-       , PrintGrammarSymbols term String
-       )
-    => term
-    -> String
-printDeleteCommand term = printGrammarSymbols " " term
+quoteSymbol :: KnownSymbol sym => Proxy sym -> String
+quoteSymbol sym = concat ["\"", symbolVal sym, "\""]
 
--- As for number 1, we have a solution, but to present it we must talk about
--- *derived symbolic grammars* and *inferred forms*.
---
--- A symbolic grammar is the input to a parser; the type which describes
--- precisely which sentences should be accepted. In case of a match, an
--- inferred form comes out the other end. Together with the remaining input,
--- the inferred form composes a @GrammarParse@ term. For every symbolic
--- grammar there is a unique associated inferred form.
---
--- The parser understands only 8 symbolic grammars, the so-called *primitive
--- symbolic grammars*. Here they are, with their associated inferred forms:
---
---   GEmpty, PEmpty; the empty grammar, which matches nothing.
---   GTrivial, PTrivial; the trivial grammar, which matches everything.
---   GSymbol symbol, PSymbol symbol parameters; matches a particular type,
---       symbol. Its inferred form picks up its parameters.
---   GProduct left right, PProduct left right; matches the two grammars in
---       sequences.
---   GSum left right, PSum outcome; matches either of the two grammars.
---       Its inferred form is tagged with a type of kind Either *, to identify
---       which alternative was found.
---   GRecurse, PRecurse recursive; symbolic recursion, signalling that the
---       parser should jump back to the topmost symbolic grammar.
---   GClose grammar, PClose inferred; closes a grammar to recursion, indicating
---       that the next GRecurse should jump back to here.
---   GOpen grammar, POpen inferred; effectively pops a recursion stack frame,
---       undoing what a GClose does.
---
--- The symbolic grammar types are uninhabited, but all inferred forms except
--- for PEmpty *are* inhabited.
---
--- To define (derive) a new symbolic grammar, one must make a new type to
--- represent it, and give an instance of @DerivedGrammar@, which shows how to
--- decompose it into a simpler grammar (which may itself be a non-primitive
--- grammar). In an effort to be more practical and less abstract, we'll dive
--- right into an example, in which we parse delete commands to the
--- @DeleteCommand@ datatype. Its intentionally silly, omitting
--- completely the where and using clauses, because we haven't given a complete
--- grammar for those parts.
-
-data DeleteCommand (tableName :: Symbol) where
-    DeleteCommand
-        :: Proxy tableName
-        -> Bool -- Only
-        -> Bool -- Found a USING clause
-        -> Bool -- Found a WHERE clause
-        -> DeleteCommand tableName
-  deriving (Show)
-
-data DeleteGrammar
-
-deleteGrammar :: Proxy DeleteGrammar
-deleteGrammar = Proxy
-
-instance DerivedGrammar DeleteGrammar where
-    type DerivedFrom DeleteGrammar = Gdelete
-
--- This is the inferred form of Gdelete. It's useful to have a type synonyms,
--- as the InferredGrammar instance demands writing it twice.
-type Pdelete only tableName usingClause whereClause = PAllOf '[
-      PSymbol DELETE '[]
-    , PSymbol FROM '[]
-    , POptional only
-    , PSymbol Name '[tableName]
-    , POptional usingClause
-    , POptional whereClause
-    ]
-
-instance InferredGrammar (Pdelete only (P (tableName :: Symbol)) usingClause whereClause) DeleteGrammar where
-    type InferredForm (Pdelete only (P tableName) usingClause whereClause) DeleteGrammar =
-        DeleteCommand tableName
-    inferFromUnderlying _ term = case term of
-        PAllOfCons _
-            (PAllOfCons _
-            (PAllOfCons onlyPart
-            (PAllOfCons (PSymbol (Name tableName _))
-            (PAllOfCons usingPart
-            (PAllOfCons wherePart
-            (PAllOfNil)))))) -> DeleteCommand tableName hasOnly hasUsing hasWhere
-
-          where
-
-            hasOnly = case onlyPart of
-                POptionalNothing -> False
-                POptionalJust _ -> True
-
-            hasUsing = case usingPart of
-                POptionalNothing -> False
-                POptionalJust _ -> True
-
-            hasWhere = case wherePart of
-                POptionalNothing -> False
-                POptionalJust _ -> True
-
-GrammarParse deleteCommand1 GEnd = parseDerivedGrammar deleteGrammar (example1 GEnd)
-GrammarParse deleteCommand2 GEnd = parseDerivedGrammar deleteGrammar (example2 GEnd)
-
--- Here we define some symbols which are used in our grammars. They must have
--- GrammarSymbol instances, so we know how to shorten the stream of
--- constructors, analagous to a term parser demanding a Stream instance which
--- says how to produce the tail of the stream.
---
--- We also give PrintGrammarSymbol instances, which allow us to dump a DSL
--- term directly to a string-like monoid, without parsing it to a Grammar
--- first.
---
--- The kind signature is important, in case PolyKinds is on. If it's
--- [k] rather than [*] then the type families may get confused (I suspect
--- GHC won't agree that ('[] :: [k]) ~ ('[] :: [l])). In particular,
--- parameter matching and inference will not work as expected, leading to
--- stuck parsing.
-data DELETE (ps :: [*]) t where
-    DELETE :: t -> DELETE '[] t
-instance GrammarSymbol (DELETE '[]) where
-    splitGrammarSymbol (DELETE t) = t
-instance IsString m => PrintGrammarSymbol (DELETE '[]) m where
-    printGrammarSymbol _ _ = fromString "DELETE"
-
-data FROM (ps :: [*]) t where
-    FROM :: t -> FROM '[] t
-instance GrammarSymbol (FROM '[]) where
-    splitGrammarSymbol (FROM t) = t
-instance IsString m => PrintGrammarSymbol (FROM '[]) m where
-    printGrammarSymbol _ _ = fromString "FROM"
-
-data ONLY (ps :: [*]) t where
-    ONLY :: t -> ONLY '[] t
-instance GrammarSymbol (ONLY '[]) where
-    splitGrammarSymbol (ONLY t) = t
-instance IsString m => PrintGrammarSymbol (ONLY '[]) m where
-    printGrammarSymbol _ _ = fromString "ONLY"
-
-data Name (ps :: [*]) t where
-    Name :: Proxy sym -> t -> Name '[P (sym :: Symbol)] t
-instance GrammarSymbol (Name '[P (sym :: Symbol)]) where
-    splitGrammarSymbol (Name _ t) = t
-instance (KnownSymbol sym, IsString m) => PrintGrammarSymbol (Name '[P sym]) m where
-    printGrammarSymbol _ (Name proxySym _) = fromString (symbolVal proxySym)
-
-data USING (ps :: [*]) t where
-    USING :: t -> USING '[] t
-instance GrammarSymbol (USING '[]) where
-    splitGrammarSymbol (USING t) = t
-instance IsString m => PrintGrammarSymbol (USING '[]) m where
-    printGrammarSymbol _ _ = fromString "USING"
-
-data WHERE (ps :: [*]) t where
-    WHERE :: t -> WHERE '[] t
-instance GrammarSymbol (WHERE '[]) where
-    splitGrammarSymbol (WHERE t) = t
-instance IsString m => PrintGrammarSymbol (WHERE '[]) m where
-    printGrammarSymbol _ _ = fromString "WHERE"
+q :: String
+q = makeQuery (Proxy :: Proxy (TyResultValue `At` RunParser ParseDelete ExampleDelete))
+-}
