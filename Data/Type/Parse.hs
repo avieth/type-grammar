@@ -29,8 +29,10 @@ module Data.Type.Parse where
 
 import Data.Kind
 import Data.Proxy
-import GHC.TypeLits (Character, Symbol, SplitSymbol, ConsSymbol)
+import Data.Type.Function
+import GHC.TypeLits -- (Character, Symbol, SplitSymbol, ConsSymbol, ToUpper, ToLower, IsSpace)
 
+{-
 -- | The idea: just as the typical haskell function s -> t maps values of
 --   type s to values of type t, we can define the type-level function
 --   k ~> l which maps types of kind k to types of kind l.
@@ -164,6 +166,7 @@ type instance TyFunctionClause TySwapDef (l, k) (k, l) '(x, y) = '(y, x)
 
 -- snd :: (s, t) -> t as a type function.
 type TySnd = TyFst :. TySwap
+-}
 
 -- |
 -- = Input stream handling
@@ -225,9 +228,9 @@ data Result output remainder where
     NoParse :: Result output remainder
     Parsed :: output -> remainder -> Result output remainder
 
-type TyResultValue = 'TyFunction TyResultValueDef ('Proxy :: Proxy (Result output remainder)) ('Proxy :: Proxy output)
-data TyResultValueDef
-type instance TyFunctionClause TyResultValueDef (Result output remainder) output ('Parsed x r) = x
+--type TyResultValue = 'TyFunction TyResultValueDef ('Proxy :: Proxy (Result output remainder)) ('Proxy :: Proxy output)
+--data TyResultValueDef
+--type instance TyFunctionClause TyResultValueDef (Result output remainder) output ('Parsed x r) = x
 
 -- | The parser kind.
 --
@@ -330,8 +333,13 @@ type family Force (thunk :: t) inputKind outputKind :: Parser inputKind outputKi
 infixl 4 :<$>
 type (:<$>) = 'Fmap
 
+-- (<$) :: (a -> b) -> f c -> f (a -> b)
+--
+infixl 4 :<$
+type f :<$ p = Pure 'Proxy f :<* p
+
 type Pure (inputKindProxy :: Proxy inputKind) (x :: outputKind) =
-    TyConst :<$> ( (TyCon ('(,) x)) :<$> 'Trivial inputKindProxy)
+    F (Fst 'Proxy 'Proxy) :<$> (C ('(,) x) :<$> 'Trivial inputKindProxy)
 
 type EOF (inputKindProxy :: Proxy inputKind) (outputKindProxy :: Proxy outputKind) =
     'Negate ('Token inputKindProxy outputKindProxy)
@@ -340,55 +348,16 @@ infixl 4 :<*>
 type (:<*>) = 'Ap
 
 infixl 4 :<*
-type x :<* y = TyFst :<$> (TyCon '(,) :<$> x :<*> y)
+type x :<* y = F (Fst 'Proxy 'Proxy) :<$> (C '(,) :<$> x :<*> y)
 
 infixl 4 :*>
-type x :*> y = TySnd :<$> (TyCon '(,) :<$> x :<*> y)
+type x :*> y = F (Snd 'Proxy 'Proxy) :<$> (C '(,) :<$> x :<*> y)
 
 infixl 3 :<|>
 type (:<|>) = 'Alt
 
 infixl 1 :>>=
 type x :>>= y = 'Join (y :<$> x)
-
--- To match on particular types, the programmar must characterize which
--- types will match, by giving a TyFunction with codomain Maybe k and
--- apply this to a parser using ApplyTyFunction. Now we have something that
--- looks like this
---
---     @Parser inputKind (Maybe k)@
---
--- By way of the TyMaybeParse function and Join, we can recover a
--- 
---     @Parser inputKind k@
---
--- which parses only when that Maybe is 'Just
-
-type Characterization k l = TyFunction k (Maybe l)
-
-type Match (characterization :: Characterization k l) (parser :: Parser inputKind k) =
-    (characterization :<$> parser) :>>= TyMaybeParse l ('Proxy :: Proxy inputKind)
-
-type TyMaybeParse k (inputKindProxy :: Proxy inputKind) =
-    'TyFunction TyMaybeParseDef ('Proxy :: Proxy (Maybe k)) ('Proxy :: Proxy (Parser inputKind k))
-data TyMaybeParseDef
-type instance TyFunctionClause TyMaybeParseDef (Maybe k) (Parser inputKind k) 'Nothing = 'Empty 'Proxy 'Proxy
-type instance TyFunctionClause TyMaybeParseDef (Maybe k) (Parser inputKind k) ('Just x) = Pure 'Proxy x
-
--- | A special case of match, in which the characterization is on a token.
---   You still have to indicate the kind of the input stream, but you can
---   probably get away without an annotation on the 'Proxy.
-type MatchToken (characterization :: Characterization k l) (inputStreamProxy :: Proxy inputStream) =
-    Match characterization ('Token inputStreamProxy ('Proxy :: Proxy k))
-
--- | An exact-match characterization. The input type must be the same as
---   the argument type @token@.
-type Exact (token :: tokenKind) = 'TyFunction (ExactDef token) ('Proxy :: Proxy tokenKind) ('Proxy :: Proxy (Maybe tokenKind))
-data ExactDef (token :: tokenKind)
-type instance TyFunctionClause (ExactDef (token :: tokenKind)) tokenKind (Maybe tokenKind) input = TyFunctionClauseExact token input
-type family TyFunctionClauseExact (token :: tokenKind) (input :: tokenKind) :: Maybe tokenKind where
-    TyFunctionClauseExact token token = 'Just token
-    TyFunctionClauseExact token anythingElse = 'Nothing
 
 -- | Show that a given type can be used to construct a value of some other
 --   type.
@@ -405,6 +374,11 @@ instance Singleton output => Singleton ('Parsed output remainder) where
 data List (t :: k) where
     Nil :: Proxy t -> List t
     Cons :: t -> List t -> List t
+
+data ListLength (l :: List t)
+type instance FunctionCodomain ListLength = Nat
+type instance EvalFunction (ListLength ('Nil 'Proxy)) = 0
+type instance EvalFunction (ListLength ('Cons x rest)) = 1 + EvalFunction (ListLength rest)
 
 instance Singleton ('Nil ('Proxy :: Proxy t)) where
     type SingletonType ('Nil ('Proxy :: Proxy t)) = List t
@@ -424,7 +398,7 @@ type Many (parser :: Parser inputKind outputKind) =
     'Suspend (ManyThunk parser) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (List outputKind))
 data ManyThunk (parser :: Parser inputKind outputKind)
 type instance Force (ManyThunk (parser :: Parser inputKind outputKind)) inputKind (List outputKind) =
-    ((TyCon 'Cons) :<$> parser :<*> 'Suspend (ManyThunk parser) 'Proxy 'Proxy) :<|> Pure ('Proxy) ('Nil 'Proxy)
+    ((C 'Cons) :<$> parser :<*> 'Suspend (ManyThunk parser) 'Proxy 'Proxy) :<|> Pure ('Proxy) ('Nil 'Proxy)
 
 -- For the Many1 parser, we shall require a nonempty list.
 data NonEmptyList (t :: k) where
@@ -441,11 +415,269 @@ instance
 
 -- | At least 1 occurrence of a parser.
 type Many1 (parser :: Parser inputKind outputKind) =
-    (TyCon 'NonEmptyList) :<$> parser :<*> Many parser
+    (C 'NonEmptyList) :<$> parser :<*> Many parser
 
 -- | 1 or more occurrences of @parser@, interspersed by @separator@.
 type SepBy (parser :: Parser inputKind outputKind) (separator :: Parser inputKind separatorKind) =
-    (TyCon 'NonEmptyList) :<$> parser :<*> Many (separator :*> parser)
+    (C 'NonEmptyList) :<$> parser :<*> Many (separator :*> parser)
 
 type Optional (parser :: Parser inputKind outputKind) =
-    TyCon 'Just :<$> parser :<|> Pure 'Proxy 'Nothing
+    ((C 'Just) :<$> parser) :<|> Pure 'Proxy 'Nothing
+
+-- To match on particular types, the programmar must characterize which
+-- types will match, by giving a TyFunction with codomain Maybe k and
+-- apply this to a parser using ApplyTyFunction. Now we have something that
+-- looks like this
+--
+--     @Parser inputKind (Maybe k)@
+--
+-- By way of the TyMaybeParse function and Join, we can recover a
+-- 
+--     @Parser inputKind k@
+--
+-- which parses only when that Maybe is 'Just
+
+type Characterization k l = TyFunction k (Maybe l)
+type Match (characterization :: Characterization k l) (parser :: Parser inputKind k) =
+    (characterization :<$> parser) :>>= (F (MaybeParse ('Proxy :: Proxy inputKind) ('Proxy :: Proxy l)))
+
+data MaybeParse (inputKindProxy :: Proxy inputKind) (outputKindProxy :: Proxy outputKind) x
+type instance FunctionCodomain (MaybeParse ('Proxy :: Proxy inputKind) ('Proxy :: Proxy outputKind)) =
+    Parser inputKind outputKind
+type instance EvalFunction (MaybeParse 'Proxy 'Proxy 'Nothing) = 'Empty 'Proxy 'Proxy
+type instance EvalFunction (MaybeParse 'Proxy 'Proxy ('Just x)) = Pure 'Proxy x
+
+-- | A special case of match, in which the characterization is on a token.
+--   You still have to indicate the kind of the input stream, but you can
+--   probably get away without an annotation on the 'Proxy.
+type MatchToken (characterization :: Characterization k l) (inputStreamProxy :: Proxy inputStream) =
+    Match characterization ('Token inputStreamProxy ('Proxy :: Proxy k))
+
+--type Satisfy (indicator :: TyFunction k Bool) = 
+
+-- | An exact-match characterization. The input type must be the same as
+--   the argument type @token@.
+data Exact (token :: tokenKind) (challenge :: tokenKind)
+type instance FunctionCodomain (Exact (token :: tokenKind)) = Maybe tokenKind
+type instance EvalFunction (Exact token challenge) = EvalFunctionExact token challenge
+type family EvalFunctionExact (token :: k) (challenge :: k) :: Maybe k where
+    EvalFunctionExact token token = 'Just token
+    EvalFunctionExact token token' = 'Nothing
+
+type AnyChar = 'Token 'Proxy ('Proxy :: Proxy Character)
+
+type ExactChar (c :: Character) = MatchToken (F (Exact c)) 'Proxy
+type ExactCharCI (c :: Character) = ExactChar (ToUpper c) :<|> ExactChar (ToLower c)
+
+type family ExactString (s :: Symbol) :: Parser Symbol Symbol where
+    ExactString s = ExactString' (SplitSymbol s)
+type family ExactString' (s :: Maybe (Character, Symbol)) :: Parser Symbol Symbol where
+    ExactString' 'Nothing = Pure 'Proxy ""
+    ExactString' ('Just '(c, rest)) = F ExactStringCons :<$> ExactChar c :<*> ExactString rest
+type family ExactStringCI (s :: Symbol) :: Parser Symbol Symbol where
+    ExactStringCI s = ExactStringCI' (SplitSymbol s)
+type family ExactStringCI' (s :: Maybe (Character, Symbol)) :: Parser Symbol Symbol where
+    ExactStringCI' 'Nothing = Pure 'Proxy ""
+    ExactStringCI' ('Just '(c, rest)) = F ExactStringCons :<$> ExactCharCI c :<*> ExactStringCI rest
+data ExactStringCons (c :: Character) (s :: Symbol)
+type instance FunctionCodomain ExactStringCons = Symbol
+type instance EvalFunction (ExactStringCons c s) = ConsSymbol c s
+
+-- A characterization must produce a Maybe, but sometimes we want to use
+-- boolean-valued functions to characterize. Thus we would like to take
+-- a function  s -> Bool  and produce a function  s -> Maybe s.
+-- Term-level, we would write
+--
+--   mkCharacterization f = \x -> if f x then Just x else Nothing
+--
+-- type-level, I suppose we'd need a new datatype.
+-- TBD throw on the x paramter? Yeah, no explicit currying.
+data BooleanCharacterization (p :: Proxy k) (f :: TyFunction k Bool) (x :: k)
+type instance FunctionCodomain (BooleanCharacterization (p :: Proxy k) (f :: TyFunction k Bool)) = Maybe k
+type instance EvalFunction (BooleanCharacterization (p :: Proxy k) (f :: TyFunction k Bool) x) = EvalBooleanCharacterization (f `At` x) x
+type family EvalBooleanCharacterization (answer :: Bool) (x :: k) :: Maybe k where
+    EvalBooleanCharacterization 'True x = 'Just x
+    EvalBooleanCharacterization 'False x = 'Nothing
+
+data IsSpaceDef (c :: Character)
+type instance FunctionCodomain IsSpaceDef = Bool
+type instance EvalFunction (IsSpaceDef c) = IsSpace c
+type Whitespace = MatchToken (F (BooleanCharacterization ('Proxy :: Proxy Character) (F IsSpaceDef))) ('Proxy :: Proxy Symbol)
+
+data ListToString (l :: List Character)
+type instance FunctionCodomain ListToString = Symbol
+type instance EvalFunction (ListToString ('Nil 'Proxy)) = ""
+type instance EvalFunction (ListToString ('Cons c rest)) = ConsSymbol c (EvalFunction (ListToString rest))
+
+data NonEmptyListToString (l :: NonEmptyList Character)
+type instance FunctionCodomain NonEmptyListToString = Symbol
+type instance EvalFunction (NonEmptyListToString ('NonEmptyList c list)) = ConsSymbol c (EvalFunction (ListToString list))
+
+-- Expression parsing (infix operators).
+
+data Operator inputKind outputKind where
+    Infix  :: [Parser inputKind outputKind] -> Operator inputKind outputKind
+    Infixl :: [Parser inputKind outputKind] -> Operator inputKind outputKind
+    Infixr :: [Parser inputKind outputKind] -> Operator inputKind outputKind
+
+data Expr base op where
+    ExprOp :: Expr base op -> op -> Expr base op -> Expr base op
+    ExprBase :: base -> Expr base op
+
+data ExprRightAssoc (proxyBase :: Proxy base) (proxyOp :: Proxy op) (left :: Expr base op) (rights :: List (op, Expr base op))
+type instance FunctionCodomain (ExprRightAssoc ('Proxy :: Proxy base) ('Proxy :: Proxy op)) = Expr base op
+type instance EvalFunction (ExprRightAssoc base op left rights) = MkExprRightAssoc left rights
+
+data ExprLeftAssoc (proxyBase :: Proxy base) (proxyOp :: Proxy op) (lefts :: List (Expr base op, op)) (right :: Expr base op)
+type instance FunctionCodomain (ExprLeftAssoc ('Proxy :: Proxy base) ('Proxy :: Proxy op)) = Expr base op
+type instance EvalFunction (ExprLeftAssoc base op lefts right) = MkExprLeftAssoc lefts right
+
+type family MkExprRightAssoc (left :: Expr base op) (list :: List (op, Expr base op)) :: Expr base op where
+    MkExprRightAssoc left ('Nil 'Proxy) = left
+    MkExprRightAssoc left ('Cons '(op, right) rest) =
+        'ExprOp left op (MkExprRightAssoc right rest)
+
+type family MkExprLeftAssoc (list :: List (Expr base op, op)) (right :: Expr base op) :: Expr base op where
+    MkExprLeftAssoc left right =
+        MkExprLeftAssocShifted (LeftmostLeftAssoc left right) (ShiftLeftAssoc left right)
+
+type family MkExprLeftAssocShifted (left :: Expr base op) (list :: List (op, Expr base op)) :: Expr base op where
+    MkExprLeftAssocShifted left ('Nil 'Proxy) = left
+    MkExprLeftAssocShifted left ('Cons '(op, right) rest) =
+        MkExprLeftAssocShifted ('ExprOp left op right) rest
+
+type family LeftmostLeftAssoc (list :: List (Expr base op, op)) (right :: Expr base op) :: Expr base op where
+    LeftmostLeftAssoc ('Nil 'Proxy) right = right
+    LeftmostLeftAssoc ('Cons '(expr, op) rest) right = expr
+
+-- Left-shift the list.
+type family ShiftLeftAssoc (list :: List (Expr base op, op)) (right :: Expr base op) :: List (op, Expr base op) where
+    ShiftLeftAssoc ('Nil 'Proxy) right = 'Nil 'Proxy
+    ShiftLeftAssoc ('Cons '(expr, op) ('Nil 'Proxy)) right =
+        'Cons '(op, right) ('Nil 'Proxy)
+    ShiftLeftAssoc ('Cons '(expr1, op1) ('Cons '(expr2, op2) rest)) right =
+        'Cons '(op1, expr2) (ShiftLeftAssoc ('Cons '(expr2, op2) rest) right)
+
+type family MkInfixrAlternatives (parseBase :: Parser inputKind base) (parsers :: [Parser inputKind op]) :: Parser inputKind (op, base) where
+    MkInfixrAlternatives base '[] = 'Empty 'Proxy 'Proxy
+    MkInfixrAlternatives base ( op ': rest ) =
+        MkInfixrAlternatives base rest :<|> (C '(,) :<$> op :<*> base) 
+
+type family MkInfixlAlternatives (parseBase :: Parser inputKind base) (parsers :: [Parser inputKind op]) :: Parser inputKind (base, op) where
+    MkInfixlAlternatives base '[] = 'Empty 'Proxy 'Proxy
+    MkInfixlAlternatives base ( op ': rest ) =
+        (C '(,) :<$> base :<*> op) :<|> MkInfixlAlternatives base rest
+
+data ParseExpr inputKind base op where
+    ParseExpr
+        -- The list of all operators, ascending precedence.
+        :: [Operator inputKind op]
+        -- A tail of the list of all operators. It's useful to keep it here so
+        -- that a 'ParseExpr contains all of the information necessary to
+        -- expand itself into a parser type (by recursing on the operator list).
+        -> [Operator inputKind op]
+        -> Parser inputKind base
+        -> Parser inputKind ()
+        -> Parser inputKind ()
+        -> ParseExpr inputKind base op
+
+type family MkParseExpr (ops :: [Operator inputKind op]) (baseParser :: Parser inputKind base) (lparen :: Parser inputKind ()) (rparen :: Parser inputKind ()) :: Parser inputKind (Expr base op) where
+    MkParseExpr (ops :: [Operator inputKind op]) (parseBase :: Parser inputKind base) lparen rparen =
+        'Suspend ('ParseExpr ops ops parseBase lparen rparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+
+type instance Force ('ParseExpr (ops :: [Operator inputKind op]) (opsRec :: [Operator inputKind op]) (parseBase :: Parser inputKind base) lparen rparen) inputKind (Expr base op) =
+    ParseExprExpand ('ParseExpr ops opsRec parseBase lparen rparen)
+
+-- To make the expression parser we must always have in hand the
+-- ParseExpr thunk, so that we can recurse. The family itself must recurse on
+-- the operators list, so that comes as another parameter.
+type family ParseExprExpand (pe :: ParseExpr inputKind base op)
+                            :: Parser inputKind (Expr base op) where
+
+    ParseExprExpand ('ParseExpr (ops :: [Operator inputKind op]) '[] (parseBase :: Parser inputKind base) lparen rparen) =
+             (C 'ExprBase :<$> parseBase)
+        :<|> (   lparen
+             :*> 'Suspend ('ParseExpr ops ops parseBase lparen rparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+             :<* rparen
+             )
+
+    ParseExprExpand ('ParseExpr (ops :: [Operator inputKind op]) ('Infix '[] ': opsrest) (parseBase :: Parser inputKind base) lparen rparen) =
+        'Suspend ('ParseExpr ops opsrest parseBase lparen rparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+
+    ParseExprExpand ('ParseExpr (ops :: [Operator inputKind op]) ('Infix ( inf ': infixrest ) ': opsrest) (parseBase :: Parser inputKind base) lparen rparen) =
+             (    C 'ExprOp
+             :<$> 'Suspend ('ParseExpr ops opsrest parseBase lparen rparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+             :<*> inf
+             :<*> 'Suspend ('ParseExpr ops opsrest parseBase lparen rparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+             )
+        :<|> 'Suspend ('ParseExpr ops ('Infix infixrest ': opsrest) parseBase lparen rparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+
+
+    ParseExprExpand ('ParseExpr (ops :: [Operator inputKind op]) ('Infixl infixls ': opsrest) (parseBase :: Parser inputKind base) lparen rparen) =
+             F (ExprLeftAssoc ('Proxy :: Proxy base) ('Proxy :: Proxy op))
+        :<$> Many (MkInfixlAlternatives ('Suspend ('ParseExpr ops opsrest parseBase rparen lparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op)))
+                                        infixls
+                  )
+        :<*> 'Suspend ('ParseExpr ops opsrest parseBase rparen lparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+
+    ParseExprExpand ('ParseExpr (ops :: [Operator inputKind op]) ('Infixr infixrs ': opsrest) (parseBase :: Parser inputKind base) lparen rparen) =
+             F (ExprRightAssoc ('Proxy :: Proxy base) ('Proxy :: Proxy op))
+        :<$> 'Suspend ('ParseExpr ops opsrest parseBase rparen lparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op))
+        :<*> Many (MkInfixrAlternatives ('Suspend ('ParseExpr ops opsrest parseBase rparen lparen) ('Proxy :: Proxy inputKind) ('Proxy :: Proxy (Expr base op)))
+                                        infixrs
+                  )
+
+type Test1 = MkParseExpr ('[] :: [Operator Symbol Character])
+                         (ExactChar 'a')
+                         (ExactChar '(' :*> Pure 'Proxy '())
+                         (ExactChar ')' :*> Pure 'Proxy '())
+type Test2 = MkParseExpr ('[ 'Infixr '[ ExactChar '+' ] ])
+                         (ExactChar 'a')
+                         (ExactChar '(' :*> Pure 'Proxy '())
+                         (ExactChar ')' :*> Pure 'Proxy '())
+{-
+type Test3 = MkParseExpr ('[ 'Infix '[ '(Pure 'Proxy '(), ExactChar '+',Pure 'Proxy '()), '(Pure 'Proxy '(), ExactChar '-', Pure 'Proxy '()) ] ] :: [Operator Symbol]) (ExactChar 'a') (ExactChar '(' :*> Pure 'Proxy '()) (ExactChar ')' :*> Pure 'Proxy '())
+
+type Test4 = MkParseExpr ('[ 'Infixr '[ '(Pure 'Proxy '(), ExactChar '+', Pure 'Proxy '())
+                                      , '(Pure 'Proxy '(), ExactChar '-', Pure 'Proxy '())
+                                      ]
+                           ]
+                         )
+                         (ExactChar 'a' :<|> ExactChar 'b')
+                         (ExactChar '(' :*> Pure 'Proxy '())
+                         (ExactChar ')' :*> Pure 'Proxy '())
+
+type Test5 = MkParseExpr ('[ 'Infixl '[ '(Pure 'Proxy '(), ExactChar '+', Pure 'Proxy '())
+                                      , '(Pure 'Proxy '(), ExactChar '-', Pure 'Proxy '())
+                                      ]
+                           ]
+                         )
+                         (ExactChar 'a' :<|> ExactChar 'b')
+                         (ExactChar '(' :*> Pure 'Proxy '())
+                         (ExactChar ')' :*> Pure 'Proxy '())
+
+type Test6 = MkParseExpr ('[ 'Infixr '[ '(Pure 'Proxy '(), ExactChar '+', Pure 'Proxy '())
+                                      , '(Pure 'Proxy '(), ExactChar '-', Pure 'Proxy '())
+                                      ]
+                           , 'Infixr '[ '(Pure 'Proxy '(), ExactChar '*', Pure 'Proxy '())
+                                      , '(Pure 'Proxy '(), ExactChar '/', Pure 'Proxy '())
+                                      ]
+                           ]
+                         )
+                         (ExactChar 'a' :<|> ExactChar 'b')
+                         (ExactChar '(' :*> Pure 'Proxy '())
+                         (ExactChar ')' :*> Pure 'Proxy '())
+
+type Q = RunParser Test6 "a+b+a*b/a"
+
+type family ExprLength (expr :: Expr outputKind) :: Nat where
+    ExprLength ('ExprBase x) = 1
+    ExprLength ('ExprOp pre left inf right post) =
+        ExprLength left + ExprLength right
+
+type family ParseResult (p :: Result outputKind remainder) :: outputKind where
+    ParseResult ('Parsed x rest) = x
+
+d :: (ExprLength (ParseResult Q) ~ 5) => ()
+d = ()
+-}
